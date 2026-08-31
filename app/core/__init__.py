@@ -1,0 +1,2 @@
+"""Configuración e infraestructura compartida."""
+
