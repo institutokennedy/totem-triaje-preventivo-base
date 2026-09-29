@@ -1,0 +1,1 @@
+"""Tarea transversal: Informe final y resumen del episodio (Grupo 6)."""

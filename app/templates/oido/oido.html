@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Módulo Oído{% endblock %}
+
+{% block content %}
+<section id="oido-modulo" class="modulo-oido" data-episodio-id="{{ episodio_id | default('') }}">
+  <h1>Evaluación auditiva</h1>
+
+  <div id="paso-instrucciones">
+    <h2>Instrucciones</h2>
+    <ol>
+      <li>Colóquese los auriculares.</li>
+      <li>Presione "Comenzar medición".</li>
+      <li>Cuando escuche un sonido, presione el botón "Escuché".</li>
+      <li>Si no escucha nada, presione "No escuché".</li>
+    </ol>
+    <button id="btn-comenzar" type="button">Comenzar medición</button>
+  </div>
+
+  <div id="paso-medicion" hidden>
+    <div class="estimulo-actual" aria-live="polite">
+      <p>Oído evaluado: <strong id="oido-actual">—</strong></p>
+      <p>Frecuencia actual: <strong id="frecuencia-actual">—</strong> Hz</p>
+      <p>Progreso: <span id="progreso-actual">0</span> / <span id="progreso-total">0</span></p>
+    </div>
+    <div class="acciones-respuesta">
+      <button id="btn-escuche" type="button">Escuché</button>
+      <button id="btn-no-escuche" type="button">No escuché</button>
+    </div>
+  </div>
+
+  <div id="paso-resumen" hidden>
+    <h2>Resumen técnico de respuestas</h2>
+    <table id="tabla-respuestas">
+      <thead>
+        <tr>
+          <th>Frecuencia (Hz)</th>
+          <th>Oído derecho</th>
+          <th>Oído izquierdo</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="acciones-decision">
+      <button id="btn-repetir" type="button">Repetir</button>
+      <button id="btn-confirmar" type="button">Confirmar</button>
+    </div>
+  </div>
+
+  <p id="oido-mensaje" role="status" aria-live="polite"></p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/oido.js') }}"></script>
+{% endblock %}

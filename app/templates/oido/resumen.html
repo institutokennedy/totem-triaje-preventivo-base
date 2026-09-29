@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Resumen del episodio{% endblock %}
+
+{% block content %}
+<section id="resumen" data-episodio-id="{{ episodio_id | default('') }}">
+  <h1>Resumen del episodio</h1>
+
+  <div id="datos-paciente">
+    <h2>Paciente</h2>
+    <dl id="lista-paciente"></dl>
+  </div>
+
+  <div id="datos-episodio">
+    <h2>Episodio</h2>
+    <dl id="lista-episodio"></dl>
+  </div>
+
+  <div id="estado-modulos">
+    <h2>Módulos</h2>
+    <div class="columna">
+      <h3>Realizados</h3>
+      <ul id="lista-completados"></ul>
+    </div>
+    <div class="columna">
+      <h3>Pendientes</h3>
+      <ul id="lista-pendientes"></ul>
+    </div>
+  </div>
+
+  <div class="acciones-resumen">
+    <button id="btn-generar-informe" type="button">Generar Informe Final</button>
+    <button id="btn-finalizar" type="button">Finalizar Episodio</button>
+  </div>
+
+  <div id="informe-generado" hidden>
+    <h2>Informe generado (versión <span id="informe-version"></span>)</h2>
+    <p id="informe-leyenda"></p>
+  </div>
+
+  <p id="resumen-mensaje" role="status" aria-live="polite"></p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/resumen.js') }}"></script>
+{% endblock %}
