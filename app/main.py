@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import create_db_and_tables
@@ -11,6 +13,7 @@ from app.modules.episodios.router import router as episodios_router
 from app.modules.dispositivos.router import router as dispositivos_router
 from app.modules.demo_ambiente.router import router as demo_ambiente_router
 from app.modules.oido.router import router as oido_router, pages_router as oido_pages_router
+from app.modules.informes.router import router as informes_router
 
 
 @asynccontextmanager
@@ -33,6 +36,11 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         openapi_url="/openapi.json",
     )
+    application.mount(
+        "/static",
+        StaticFiles(directory=Path(__file__).resolve().parent / "static"),
+        name="static",
+    )
 
     @application.get(
         "/health",
@@ -52,6 +60,7 @@ def create_app() -> FastAPI:
     application.include_router(demo_ambiente_router)
     application.include_router(oido_router)
     application.include_router(oido_pages_router)
+    application.include_router(informes_router)
 
     return application
 

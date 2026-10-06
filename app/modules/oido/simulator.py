@@ -1,10 +1,9 @@
 import random
-from typing import List
 
 
-def simular_evaluacion_auditiva(frecuencias_hz: List[int]) -> dict:
+def simular_evaluacion_auditiva(frecuencias_hz: list[int]) -> dict:
     """Genera respuestas booleanas ficticias (True = respuesta registrada al estímulo)
-    para cada frecuencia y para cada oído. No aplica umbrales ni interpretación clínica."""
+    para cada frecuencia y cada oído. No aplica umbrales ni interpretación clínica."""
     if not frecuencias_hz:
         raise ValueError("frecuencias_hz no puede estar vacía")
     if any((not isinstance(f, int)) or isinstance(f, bool) or f <= 0 for f in frecuencias_hz):

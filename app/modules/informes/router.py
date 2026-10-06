@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 # Contrato del repo base: get_session y los modelos comunes se consumen sin modificarse.
-from app.database import get_session
+from app.core.database import get_session
 from app.models import EpisodioAtencion, Paciente, ResultadoModulo
 from app.modules.informes.models import Informe
 

@@ -55,6 +55,65 @@
     return id;
   }
 
+  async function solicitarJson(url, opciones) {
+    const resp = await fetch(url, opciones);
+    const resultado = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const detalle = resultado.detail || "No se pudo preparar la medición";
+      throw new Error(typeof detalle === "string" ? detalle : JSON.stringify(detalle));
+    }
+    return resultado;
+  }
+
+  async function prepararEpisodioDemostracion() {
+    const boton = $("btn-preparar-demo");
+    boton.disabled = true;
+    mensaje("Preparando episodio de demostración...");
+
+    try {
+      const pacientes = await solicitarJson("/api/v1/pacientes");
+      let paciente = pacientes.find((item) => item.dni === "00000000");
+      if (!paciente) {
+        paciente = await solicitarJson("/api/v1/pacientes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dni: "00000000",
+            nombre: "Paciente",
+            apellido: "De demostración",
+            fecha_nacimiento: "2000-01-01",
+          }),
+        });
+      }
+
+      const dispositivos = await solicitarJson("/api/v1/dispositivos");
+      if (!dispositivos.some((item) => item.codigo === CODIGO_DISPOSITIVO)) {
+        await solicitarJson("/api/v1/dispositivos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            codigo: CODIGO_DISPOSITIVO,
+            nombre: "Simulador auditivo",
+            tipo: "OIDO",
+          }),
+        });
+      }
+
+      const episodio = await solicitarJson("/api/v1/episodios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          paciente_id: paciente.id,
+          tipo_circuito: "DEMOSTRACION_OIDO",
+        }),
+      });
+      window.location.assign("/oido?episodio_id=" + encodeURIComponent(episodio.id));
+    } catch (error) {
+      mensaje("Error: " + error.message, true);
+      boton.disabled = false;
+    }
+  }
+
   function reiniciar() {
     estado.indice = 0;
     estado.oidoIdx = 0;
@@ -157,8 +216,10 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     if (estado.episodioId === null) {
-      mensaje("No hay un episodio activo. Regrese al inicio.", true);
+      mensaje("Prepare un episodio de demostración para comenzar.");
       $("btn-comenzar").disabled = true;
+      const botonDemo = $("btn-preparar-demo");
+      if (botonDemo) botonDemo.addEventListener("click", prepararEpisodioDemostracion);
       return;
     }
     $("progreso-total").textContent = String(FRECUENCIAS_HZ.length * OIDOS.length);

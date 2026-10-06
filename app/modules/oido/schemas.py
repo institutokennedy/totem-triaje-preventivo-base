@@ -1,12 +1,10 @@
-from typing import List
-
 from pydantic import BaseModel, StrictBool, StrictInt, model_validator
 
 
 class DatosOido(BaseModel):
-    frecuencias_hz: List[StrictInt]
-    resultados_oido_derecho: List[StrictBool]
-    resultados_oido_izquierdo: List[StrictBool]
+    frecuencias_hz: list[StrictInt]
+    resultados_oido_derecho: list[StrictBool]
+    resultados_oido_izquierdo: list[StrictBool]
 
     @model_validator(mode="after")
     def validar_listas(self) -> "DatosOido":

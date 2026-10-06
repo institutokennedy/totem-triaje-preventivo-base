@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2f5f2">
+  <title>{% block title %}Tótem de triaje preventivo{% endblock %}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17332f;
+      --muted: #60716d;
+      --paper: #f2f5f2;
+      --surface: #ffffff;
+      --line: #d8e1dc;
+      --teal: #087e72;
+      --teal-dark: #05645b;
+      --coral: #c65a45;
+      --focus: #e8a23a;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--ink);
+      background-color: var(--paper);
+      background-image: linear-gradient(135deg, rgba(8, 126, 114, .035) 25%, transparent 25%), linear-gradient(315deg, rgba(198, 90, 69, .025) 25%, transparent 25%);
+      background-size: 28px 28px;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: .9rem max(1.25rem, calc((100vw - 980px) / 2));
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, .92);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      color: var(--ink);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 2.35rem;
+      aspect-ratio: 1;
+      place-items: center;
+      border-radius: 7px;
+      color: white;
+      background: var(--teal);
+      font-family: Georgia, serif;
+      font-size: 1.25rem;
+    }
+
+    .brand-name { font-family: Georgia, "Times New Roman", serif; font-size: 1.05rem; }
+    .brand-caption { display: block; margin-top: .1rem; color: var(--muted); font-size: .72rem; font-weight: 500; }
+
+    nav { display: flex; align-items: center; gap: .45rem; }
+    nav a {
+      padding: .55rem .75rem;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: .9rem;
+      text-decoration: none;
+    }
+    nav a:hover, nav a:focus-visible { color: var(--teal-dark); background: #e8f2ef; }
+
+    .page-shell { width: min(100% - 2rem, 820px); margin: 2.5rem auto; }
+    .modulo-oido, #resumen {
+      padding: clamp(1.25rem, 4vw, 2.5rem);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 12px 32px rgba(23, 51, 47, .07);
+      animation: arrive .35s ease-out both;
+    }
+
+    h1, h2, h3 { color: var(--ink); }
+    h1 { margin: 0 0 1.5rem; font-family: Georgia, "Times New Roman", serif; font-size: clamp(1.8rem, 5vw, 2.35rem); font-weight: 600; }
+    h2 { margin: 1.5rem 0 .85rem; font-family: Georgia, "Times New Roman", serif; font-size: 1.35rem; font-weight: 600; }
+    h3 { font-size: 1rem; }
+    p, li { line-height: 1.6; }
+    ol { padding-left: 1.35rem; color: var(--muted); }
+    li + li { margin-top: .3rem; }
+
+    button {
+      min-height: 2.75rem;
+      padding: .65rem 1rem;
+      border: 1px solid var(--teal);
+      border-radius: 6px;
+      color: #fff;
+      background: var(--teal);
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { border-color: var(--teal-dark); background: var(--teal-dark); }
+    button:disabled { border-color: #aab8b3; background: #aab8b3; cursor: not-allowed; }
+    button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+    #btn-no-escuche, #btn-repetir { border-color: #75827e; color: var(--ink); background: #fff; }
+    #btn-no-escuche:hover:not(:disabled), #btn-repetir:hover:not(:disabled) { background: #edf1ef; }
+
+    .estimulo-actual, #datos-paciente, #datos-episodio, #estado-modulos {
+      margin: 1rem 0;
+      padding: 1rem;
+      border-left: 3px solid var(--teal);
+      background: #f4f8f6;
+    }
+    .acciones-respuesta, .acciones-decision, .acciones-resumen { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: 1rem; }
+    table { width: 100%; margin-top: 1rem; border-collapse: collapse; }
+    th, td { padding: .7rem; border-bottom: 1px solid var(--line); text-align: left; }
+    th { color: var(--muted); font-size: .82rem; font-weight: 700; }
+    dl { display: grid; grid-template-columns: minmax(7rem, .35fr) 1fr; gap: .45rem .9rem; }
+    dt { color: var(--muted); }
+    dd { margin: 0; font-weight: 600; }
+    #oido-mensaje, #resumen-mensaje { min-height: 1.5rem; margin: 1rem 0 0; color: var(--teal-dark); }
+    .error { color: var(--coral) !important; }
+    footer { padding: 0 1rem 1.5rem; color: var(--muted); text-align: center; font-size: .8rem; }
+
+    @keyframes arrive { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; scroll-behavior: auto !important; } }
+    @media (max-width: 560px) {
+      .topbar { padding-inline: 1rem; }
+      .brand-name { font-size: .95rem; }
+      nav a { padding-inline: .5rem; }
+      .page-shell { width: min(100% - 1rem, 820px); margin: 1rem auto; }
+      th, td { padding: .5rem .35rem; font-size: .84rem; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Tótem de triaje preventivo, inicio">
+      <span class="brand-mark" aria-hidden="true">T</span>
+      <span><span class="brand-name">Tótem</span><span class="brand-caption">TRIAJE PREVENTIVO</span></span>
+    </a>
+    <nav aria-label="Navegación principal">
+      <a href="/oido">Oído</a>
+      <a href="/docs">API</a>
+    </nav>
+  </header>
+  <main class="page-shell">
+    {% block content %}{% endblock %}
+  </main>
+  <footer>Entorno educativo · Mediciones simuladas</footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

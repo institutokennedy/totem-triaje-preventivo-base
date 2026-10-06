@@ -6,7 +6,14 @@
 <section id="oido-modulo" class="modulo-oido" data-episodio-id="{{ episodio_id | default('') }}">
   <h1>Evaluación auditiva</h1>
 
-  <div id="paso-instrucciones">
+  {% if not episodio_id %}
+  <div id="preparar-demostracion">
+    <p>No hay un episodio activo. Puede crear uno de demostración para comenzar la medición.</p>
+    <button id="btn-preparar-demo" type="button">Preparar medición de demostración</button>
+  </div>
+  {% endif %}
+
+  <div id="paso-instrucciones" {% if not episodio_id %}hidden{% endif %}>
     <h2>Instrucciones</h2>
     <ol>
       <li>Colóquese los auriculares.</li>
