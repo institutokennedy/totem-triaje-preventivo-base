@@ -1,47 +1,62 @@
 {% extends "base.html" %}
 
-{% block title %}Resumen del episodio{% endblock %}
-
 {% block content %}
-<section id="resumen" data-episodio-id="{{ episodio_id | default('') }}">
+<style>
+  .resumen { max-width: 720px; margin: 0 auto; padding: 1.5rem 1rem; font-family: system-ui, sans-serif; }
+  .resumen h2 { margin-top: 1.5rem; }
+  .resumen ul { padding-left: 1.2rem; }
+  .resumen .hecho::marker { color: #2a7a3b; }
+  .resumen .pendiente::marker { color: #b26a00; }
+  .resumen button { padding: .7rem 1.2rem; border: 1px solid #1f4e5f; border-radius: 6px; background: #1f4e5f; color: #fff; font-size: 1rem; cursor: pointer; }
+  .resumen button.secundario { background: #fff; color: #1f4e5f; }
+  .resumen button:disabled { opacity: .5; cursor: not-allowed; }
+  .resumen button:focus-visible { outline: 3px solid #e0a100; outline-offset: 2px; }
+  .resumen .acciones { display: flex; gap: .75rem; margin: 1.5rem 0; flex-wrap: wrap; }
+  .resumen .leyenda { padding: .75rem; border-left: 4px solid #1f4e5f; background: #eef3f5; }
+  .resumen .error { color: #a12626; }
+  .resumen pre { white-space: pre-wrap; overflow-x: auto; background: #f6f6f6; padding: .75rem; }
+</style>
+
+<main class="resumen" id="resumen-app">
   <h1>Resumen del episodio</h1>
 
-  <div id="datos-paciente">
-    <h2>Paciente</h2>
-    <dl id="lista-paciente"></dl>
+  <section aria-labelledby="h-estado">
+    <h2 id="h-estado">Estado</h2>
+    <p id="datos-paciente">Cargando…</p>
+    <p id="estado-episodio"></p>
+  </section>
+
+  <section aria-labelledby="h-realizados">
+    <h2 id="h-realizados">Módulos realizados</h2>
+    <ul id="lista-completados"></ul>
+  </section>
+
+  <section aria-labelledby="h-pendientes">
+    <h2 id="h-pendientes">Módulos pendientes</h2>
+    <ul id="lista-pendientes"></ul>
+  </section>
+
+  <div class="acciones">
+    <button type="button" id="btn-generar">Generar informe final</button>
+    <button type="button" class="secundario" id="btn-cerrar">Cerrar episodio</button>
   </div>
 
-  <div id="datos-episodio">
-    <h2>Episodio</h2>
-    <dl id="lista-episodio"></dl>
-  </div>
+  <p class="error" id="mensaje-error" role="alert" hidden></p>
 
-  <div id="estado-modulos">
-    <h2>Módulos</h2>
-    <div class="columna">
-      <h3>Realizados</h3>
-      <ul id="lista-completados"></ul>
-    </div>
-    <div class="columna">
-      <h3>Pendientes</h3>
-      <ul id="lista-pendientes"></ul>
-    </div>
-  </div>
-
-  <div class="acciones-resumen">
-    <button id="btn-generar-informe" type="button">Generar Informe Final</button>
-    <button id="btn-finalizar" type="button">Finalizar Episodio</button>
-  </div>
-
-  <div id="informe-generado" hidden>
-    <h2>Informe generado (versión <span id="informe-version"></span>)</h2>
-    <p id="informe-leyenda"></p>
-  </div>
-
-  <p id="resumen-mensaje" role="status" aria-live="polite"></p>
-</section>
+  <section id="seccion-informe" hidden aria-labelledby="h-informe">
+    <h2 id="h-informe">Informe final</h2>
+    <p class="leyenda" id="leyenda-informe"></p>
+    <p class="acciones">
+      <a id="enlace-html" href="#" target="_blank" rel="noopener">Abrir informe</a>
+      &nbsp;|&nbsp;
+      <a id="enlace-pdf" href="#" target="_blank" rel="noopener">Imprimir / Guardar como PDF</a>
+    </p>
+    <iframe id="vista-informe" title="Vista previa del informe"
+            style="width:100%;height:1000px;border:1px solid #cbd5e1"></iframe>
+  </section>
+</main>
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', path='js/resumen.js') }}"></script>
+<script src="{{ url_for('static', path='js/resumen.js') }}?v=4"></script>
 {% endblock %}

@@ -1,14 +1,17 @@
 import json
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
+from fastapi.responses import HTMLResponse
 from sqlmodel import Session, select
 
 # Contrato del repo base: get_session y los modelos comunes se consumen sin modificarse.
 from app.core.database import get_session
 from app.models import EpisodioAtencion, Paciente, ResultadoModulo
 from app.modules.informes.models import Informe
+from app.reporte.reporte import LEYENDA, construir_reporte, render_html
 
 router = APIRouter(prefix="/api/v1/episodios", tags=["informes"])
 
@@ -16,7 +19,7 @@ LEYENDA_LEGAL = "Informe preventivo. No constituye un diagnóstico médico."
 
 # Valor de ResultadoModulo.modulo -> nombre visible
 MODULOS = {
-    "signos_vitales": "Signos Vitales",
+    "signos_vitales": "Signos vitales",
     "ecg": "ECG",
     "glucemia": "Glucemia",
     "boca": "Boca",
@@ -32,10 +35,45 @@ class InformeCreate(BaseModel):
 def _serializar(informe: Informe) -> dict:
     salida = informe.model_dump(mode="json")
     try:
-        salida["contenido_json"] = json.loads(informe.contenido_json)
+        contenido = json.loads(informe.contenido_json)
     except (TypeError, ValueError):
-        pass
+        contenido = {}
+    salida["contenido"] = contenido
+    salida["contenido_json"] = contenido
     return salida
+
+
+def _html_de_informe(informe: Informe) -> str:
+    contenido = json.loads(informe.contenido_json)
+    return render_html(contenido["reporte"])
+
+
+def _obtener_informe(session: Session, episodio_id: int, informe_id: int) -> Informe:
+    informe = session.get(Informe, informe_id)
+    if informe is None or informe.episodio_id != episodio_id:
+        raise HTTPException(status_code=404, detail="Informe no encontrado")
+    return informe
+
+
+def _pdf_response(informe: Informe) -> Response:
+    html = _html_de_informe(informe)
+    try:
+        from weasyprint import HTML
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="PDF no disponible. Abra el informe HTML y use Imprimir / Guardar como PDF.",
+        )
+    pdf = HTML(string=html).write_pdf()
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="informe_episodio_{informe.episodio_id}_v{informe.version}.pdf"'
+            )
+        },
+    )
 
 
 def _obtener_episodio_y_paciente(session: Session, episodio_id: int):
@@ -98,12 +136,14 @@ def generar_informe(
     completados, pendientes = _estado_modulos(agrupados)
 
     contenido = {
-        "leyenda": LEYENDA_LEGAL,
+        "leyenda": LEYENDA,
         "paciente": paciente.model_dump(mode="json"),
         "episodio": episodio.model_dump(mode="json"),
         "modulos_completados": completados,
         "modulos_pendientes": pendientes,
         "resultados": agrupados,
+        "generado_en": datetime.now().isoformat(),
+        "reporte": construir_reporte(paciente, agrupados, pendientes),
     }
 
     previos = session.exec(select(Informe).where(Informe.episodio_id == episodio_id)).all()
@@ -132,13 +172,33 @@ def listar_informes(episodio_id: int, session: Session = Depends(get_session)):
     return [_serializar(i) for i in informes]
 
 
+@router.get(
+    "/{episodio_id}/informes/{informe_id}/html",
+    response_class=HTMLResponse,
+)
+def obtener_informe_html(
+    episodio_id: int, informe_id: int, session: Session = Depends(get_session)
+):
+    informe = _obtener_informe(session, episodio_id, informe_id)
+    return HTMLResponse(_html_de_informe(informe))
+
+
+@router.get("/{episodio_id}/informes/{informe_id}/pdf")
+def obtener_informe_pdf(
+    episodio_id: int, informe_id: int, session: Session = Depends(get_session)
+):
+    informe = _obtener_informe(session, episodio_id, informe_id)
+    return _pdf_response(informe)
+
+
+@router.post("/{episodio_id}/cerrar")
 @router.post("/{episodio_id}/finalizar")
 def finalizar_episodio(episodio_id: int, session: Session = Depends(get_session)):
-    # Supuesto: EpisodioAtencion posee el atributo "estado".
     episodio = session.get(EpisodioAtencion, episodio_id)
     if episodio is None:
         raise HTTPException(status_code=404, detail="Episodio no encontrado")
-    episodio.estado = "FINALIZADO"
+    episodio.estado = "CERRADO"
+    episodio.finalizado_en = datetime.now()
     session.add(episodio)
     session.commit()
     session.refresh(episodio)

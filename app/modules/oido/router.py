@@ -6,7 +6,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
-# Contrato del repo base: get_session y los modelos comunes se consumen sin modificarse.
 from app.core.database import get_session
 from app.models import Dispositivo, EpisodioAtencion, ResultadoModulo
 from app.modules.oido.schemas import ResultadoOidoCreate
@@ -82,4 +81,4 @@ def listar_resultados_oido(episodio_id: int, session: Session = Depends(get_sess
             ResultadoModulo.modulo == MODULO,
         )
     ).all()
-    return [_serializar(r) for r in registros]
+    return [_serializar(registro) for registro in registros]
