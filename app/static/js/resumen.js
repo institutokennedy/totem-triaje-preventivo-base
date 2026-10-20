@@ -30,6 +30,21 @@
     });
   }
 
+  async function cargarEstadoIA() {
+    const nodo = el("estado-configuracion-ia");
+    try {
+      const respuesta = await fetch("/api/v1/analisis-ia/estado");
+      if (!respuesta.ok) throw new Error("No se pudo consultar la configuración.");
+      const estado = await respuesta.json();
+      nodo.textContent = estado.habilitada
+        ? `IA activa (${estado.modelo}). El análisis se ejecutará al generar el informe.`
+        : "";
+    } catch (error) {
+      nodo.textContent = error.message;
+      nodo.classList.add("error");
+    }
+  }
+
   async function cargarResumen() {
     mostrarError("");
     if (!episodioId) {
@@ -61,6 +76,9 @@
       if (r.status !== 201) throw new Error("No se pudo generar el informe.");
       const informe = await r.json();
       el("leyenda-informe").textContent = informe.contenido.leyenda;
+      el("estado-analisis-ia").textContent = informe.contenido.analisis_ia
+        ? "El análisis asistido por IA es orientativo y requiere revisión profesional."
+        : "Análisis asistido por IA no disponible; el triaje permanece pendiente de revisión profesional.";
       const base = `/api/v1/episodios/${episodioId}/informes/${informe.id}`;
       el("enlace-html").href = `${base}/html`;
       el("enlace-pdf").href = `${base}/html`;
@@ -87,5 +105,6 @@
 
   el("btn-generar").addEventListener("click", generarInforme);
   el("btn-cerrar").addEventListener("click", cerrarEpisodio);
+  cargarEstadoIA();
   cargarResumen();
 })();

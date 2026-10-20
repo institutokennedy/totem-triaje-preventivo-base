@@ -1,10 +1,21 @@
+from typing import List, Literal
+
 from pydantic import BaseModel, StrictBool, StrictInt, model_validator
 
 
+class CuestionarioOido(BaseModel):
+    tiene_problema_auditivo: StrictBool
+    problemas_auditivos: list[str]
+    otro_problema: str
+    factores: list[str]
+
+
 class DatosOido(BaseModel):
-    frecuencias_hz: list[StrictInt]
-    resultados_oido_derecho: list[StrictBool]
-    resultados_oido_izquierdo: list[StrictBool]
+    frecuencias_hz: List[StrictInt]
+    resultados_oido_derecho: List[StrictBool]
+    resultados_oido_izquierdo: List[StrictBool]
+    nivel_senal: Literal["NORMAL", "REDUCIDO_POR_AUTOINFORME"] = "NORMAL"
+    cuestionario: CuestionarioOido | None = None
 
     @model_validator(mode="after")
     def validar_listas(self) -> "DatosOido":
@@ -26,3 +37,11 @@ class ResultadoOidoCreate(BaseModel):
     dispositivo_id: int
     origen: str
     data: DatosOido
+
+
+class RespuestaJoystickCreate(BaseModel):
+    """Una respuesta individual enviada por el ESP32 (arriba = True, abajo = False)."""
+
+    dispositivo_id: int
+    respuesta: StrictBool
+    origen: str = "ESP32"

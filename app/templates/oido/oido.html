@@ -3,25 +3,71 @@
 {% block title %}Módulo Oído{% endblock %}
 
 {% block content %}
+<style>
+  .modulo-oido fieldset { margin: 1rem 0; padding: .8rem 1rem; }
+  .modulo-oido legend { font-weight: 600; }
+  .modulo-oido label { display: block; margin: .35rem 0; cursor: pointer; }
+  .modulo-oido .sub-opciones { margin: .5rem 0 0 1.5rem; }
+  .modulo-oido #txt-otro { margin-left: .5rem; }
+</style>
+
 <section id="oido-modulo" class="modulo-oido" data-episodio-id="{{ episodio_id | default('') }}">
   <h1>Evaluación auditiva</h1>
 
-  {% if not episodio_id %}
-  <div id="preparar-demostracion">
-    <p>No hay un episodio activo. Puede crear uno de demostración para comenzar la medición.</p>
-    <button id="btn-preparar-demo" type="button">Preparar medición de demostración</button>
-  </div>
-  {% endif %}
+  <div id="paso-formulario">
+    <h2>Completar el formulario</h2>
 
-  <div id="paso-instrucciones" {% if not episodio_id %}hidden{% endif %}>
+    <fieldset>
+      <legend>¿Presenta algún problema o inconveniente de audición?</legend>
+      <label>
+        <input type="checkbox" id="chk-problema" aria-controls="opciones-problema" aria-expanded="false">
+        Sí
+      </label>
+
+      <div id="opciones-problema" class="sub-opciones" hidden>
+        <p>Seleccione las opciones que correspondan:</p>
+        <label><input type="checkbox" name="problema" value="hipoacusia"> Hipoacusia</label>
+        <label><input type="checkbox" name="problema" value="misofonia"> Misofonía</label>
+        <label><input type="checkbox" name="problema" value="reclutamiento_auditivo"> Reclutamiento auditivo</label>
+        <label><input type="checkbox" name="problema" value="fonofobia"> Fonofobia</label>
+        <label>
+          <input type="checkbox" name="problema" value="otro" id="chk-otro"> Otro
+          <span id="campo-otro" hidden>
+            <input type="text" id="txt-otro" maxlength="100" placeholder="Especifique" aria-label="Especifique otro problema de audición">
+          </span>
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Marcar la que corresponde</legend>
+      <label><input type="checkbox" name="factor" value="uso_audifonos_constante"> Uso de audífonos constante</label>
+      <label><input type="checkbox" name="factor" value="hipertension"> Hipertensión</label>
+      <label><input type="checkbox" name="factor" value="antecedentes_familiares_auditivos"> Antecedentes familiares con problemas auditivos</label>
+      <label><input type="checkbox" name="factor" value="otitis_frecuentes"> Otitis frecuentes</label>
+      <label><input type="checkbox" name="factor" value="traumatismo_craneal"> Traumatismo craneal</label>
+      <label><input type="checkbox" name="factor" value="quimioterapia_ototoxicos"> Quimioterapia (fármacos ototóxicos)</label>
+      <label><input type="checkbox" name="factor" value="diabetes"> Diabetes</label>
+      <label><input type="checkbox" name="factor" value="exposicion_ruidos_fuertes"> Exposición a ruidos fuertes</label>
+    </fieldset>
+
+    <button id="btn-continuar" type="button">Continuar</button>
+  </div>
+
+  <div id="paso-instrucciones" hidden>
     <h2>Instrucciones</h2>
+    <p id="aviso-volumen-reducido" role="status" aria-live="polite" hidden>
+      Se reducirá automáticamente el volumen digital de los tonos por la respuesta del formulario.
+      Esta reducción no garantiza un nivel seguro en todos los auriculares. Si siente molestia,
+      detenga la prueba y retire los auriculares.
+    </p>
     <ol>
-      <li>Colóquese los auriculares.</li>
-      <li>Presione "Comenzar medición".</li>
-      <li>Cuando escuche un sonido, presione el botón "Escuché".</li>
-      <li>Si no escucha nada, presione "No escuché".</li>
+      <li>Colóquese los auriculares conectados a la computadora.</li>
+      <li>Presione "Comenzar". Se reproducirá un tono, primero en el oído derecho y luego en el izquierdo.</li>
+      <li>Guíe el centro del joystick hacia <strong>ARRIBA</strong> para indicar un <strong>"SÍ"</strong> (escucho el sonido).</li>
+      <li>Guíe el centro del joystick hacia <strong>ABAJO</strong> para indicar un <strong>"NO"</strong> (no escucho el sonido).</li>
     </ol>
-    <button id="btn-comenzar" type="button">Comenzar medición</button>
+    <button id="btn-comenzar" type="button">Comenzar</button>
   </div>
 
   <div id="paso-medicion" hidden>
@@ -30,10 +76,16 @@
       <p>Frecuencia actual: <strong id="frecuencia-actual">—</strong> Hz</p>
       <p>Progreso: <span id="progreso-actual">0</span> / <span id="progreso-total">0</span></p>
     </div>
-    <div class="acciones-respuesta">
-      <button id="btn-escuche" type="button">Escuché</button>
-      <button id="btn-no-escuche" type="button">No escuché</button>
-    </div>
+    <p id="estado-respuesta" role="status" aria-live="polite"></p>
+    <p>Guíe el centro del joystick hacia <strong>arriba (SÍ)</strong> o hacia <strong>abajo (NO)</strong>.</p>
+
+    <details class="respaldo">
+      <summary>Respuesta manual (respaldo si el joystick no responde)</summary>
+      <div class="acciones-respuesta">
+        <button id="btn-escuche" type="button">Sí escucho</button>
+        <button id="btn-no-escuche" type="button">No escucho</button>
+      </div>
+    </details>
   </div>
 
   <div id="paso-resumen" hidden>

@@ -1,20 +1,25 @@
-"""ESP32 (MicroPython) - Módulo de Oído.
+"""ESP32 (MicroPython) - Módulo de Oído (solo entrada).
 
-Emite tonos por dos canales (derecho / izquierdo), lee dos botones
-(uno por oído), arma el JSON y lo envía a FastAPI:
+El sonido lo reproduce el software (navegador) por los auriculares de la computadora.
+El ESP32 solo lee el joystick analógico:
 
-  GET  /api/v1/dispositivos          -> busca OIDO-001
-  POST /api/v1/dispositivos          -> lo registra si no existe
-  POST /api/v1/oido/resultados       -> guarda la medición (espera 201)
+    joystick ARRIBA  -> "sí escucho"  -> {"respuesta": true}
+    joystick ABAJO   -> "no escucho"  -> {"respuesta": false}
 
-Uso: presionar AMBOS botones a la vez para iniciar la prueba.
-Requiere MicroPython >= 1.20 (PWM.duty_u16; hay respaldo para duty()).
+y envía cada respuesta como JSON a FastAPI:
+
+  GET  /api/v1/dispositivos        -> busca OIDO-001
+  POST /api/v1/dispositivos        -> lo registra si no existe
+  POST /api/v1/oido/respuestas     -> {"dispositivo_id": N, "respuesta": bool, "origen": "ESP32"}
+
+El navegador consulta esas respuestas y arma el resultado final del episodio.
+No tocar el joystick al encender la placa (se calibra el centro).
 """
 import time
 
 import network
 import ujson
-from machine import PWM, Pin
+from machine import ADC, Pin
 
 try:
     import urequests as requests
@@ -26,58 +31,67 @@ import config
 HEADERS = {"Content-Type": "application/json"}
 
 
-# ---------------------------------------------------------------- hardware
-class CanalAudio:
-    """Salida de tono por PWM en un pin (un oído)."""
+# ---------------------------------------------------------------- joystick
+class Joystick:
+    """Eje Y analógico (ADC1)."""
 
-    def __init__(self, pin_num):
-        self.pwm = PWM(Pin(pin_num), freq=1000)
-        self._duty(0)
+    def __init__(self, pin_y):
+        self.adc = ADC(Pin(pin_y))
+        self.adc.atten(ADC.ATTN_11DB)  # rango ~0-3.3 V
+        self.centro = 32768
+        self.calibrar()
 
-    def _duty(self, porcentaje):
-        try:
-            self.pwm.duty_u16(int(65535 * porcentaje / 100))
-        except AttributeError:
-            self.pwm.duty(int(1023 * porcentaje / 100))
+    def _leer(self):
+        total = 0
+        for _ in range(5):
+            total += self.adc.read_u16()
+            time.sleep_us(200)
+        return total // 5
 
-    def tono(self, frecuencia_hz):
-        self.pwm.freq(int(frecuencia_hz))
-        self._duty(config.VOLUMEN_PORCENTAJE)
+    def calibrar(self):
+        """Toma el centro en reposo (promedio)."""
+        total = 0
+        for _ in range(30):
+            total += self._leer()
+            time.sleep_ms(5)
+        self.centro = total // 30
+        print("Centro del joystick:", self.centro)
 
-    def silencio(self):
-        self._duty(0)
+    def direccion(self):
+        """+1 = arriba, -1 = abajo, 0 = centro."""
+        desvio = self._leer() - self.centro
+        if config.INVERTIR_EJE_Y:
+            desvio = -desvio
+        umbral = int(65535 * config.UMBRAL_DESVIO)
+        if desvio > umbral:
+            return 1
+        if desvio < -umbral:
+            return -1
+        return 0
 
-
-class Boton:
-    """Botón a GND con pull-up interno y antirrebote."""
-
-    def __init__(self, pin_num):
-        self.pin = Pin(pin_num, Pin.IN, Pin.PULL_UP)
-
-    def presionado(self):
-        if self.pin.value() == 0:
-            time.sleep_ms(20)  # antirrebote
-            return self.pin.value() == 0
-        return False
-
-    def esperar_soltar(self):
-        while self.pin.value() == 0:
+    def esperar_centro(self):
+        while self.direccion() != 0:
             time.sleep_ms(10)
 
+    def esperar_gesto(self):
+        """Bloquea hasta que el joystick se sostenga arriba/abajo el tiempo mínimo.
 
-led = Pin(config.PIN_LED, Pin.OUT)
-canal_derecho = CanalAudio(config.PIN_SALIDA_DERECHO)
-canal_izquierdo = CanalAudio(config.PIN_SALIDA_IZQUIERDO)
-boton_derecho = Boton(config.PIN_BOTON_DERECHO)
-boton_izquierdo = Boton(config.PIN_BOTON_IZQUIERDO)
+        Devuelve +1 (arriba) o -1 (abajo).
+        """
+        previo = 0
+        desde = None
+        while True:
+            actual = self.direccion()
+            if actual != 0 and actual == previo:
+                if time.ticks_diff(time.ticks_ms(), desde) >= config.TIEMPO_CONFIRMACION_MS:
+                    return actual
+            else:
+                desde = time.ticks_ms() if actual != 0 else None
+            previo = actual
+            time.sleep_ms(5)
 
 
-def parpadear(veces, ms=150):
-    for _ in range(veces):
-        led.value(1)
-        time.sleep_ms(ms)
-        led.value(0)
-        time.sleep_ms(ms)
+joystick = Joystick(config.PIN_JOY_Y)
 
 
 # -------------------------------------------------------------------- red
@@ -137,12 +151,18 @@ def obtener_dispositivo_id():
         resp.close()
 
 
-def enviar_resultado(payload):
-    """POST /api/v1/oido/resultados. Devuelve True si la API responde 201."""
+def enviar_respuesta(dispositivo_id, escucho):
+    """POST /api/v1/oido/respuestas. Devuelve True si la API responde 201."""
+    payload = {
+        "dispositivo_id": dispositivo_id,
+        "respuesta": escucho,
+        "origen": config.ORIGEN,
+    }
     for intento in range(1, config.INTENTOS_ENVIO + 1):
         try:
+            conectar_wifi()
             resp = requests.post(
-                _url("/api/v1/oido/resultados"),
+                _url("/api/v1/oido/respuestas"),
                 data=ujson.dumps(payload),
                 headers=HEADERS,
             )
@@ -155,107 +175,33 @@ def enviar_resultado(payload):
                 return False
         except Exception as e:  # sin red, timeout, etc.
             print("Error de envío (%d): %s" % (intento, e))
-        time.sleep(1)
+        time.sleep_ms(300)
     return False
 
 
-# ----------------------------------------------------------------- prueba
-def probar_tono(canal, boton_propio, boton_otro, frecuencia):
-    """Suena un tono en un oído y espera que se presione el botón de ESE lado.
-
-    True  -> presionó su botón dentro de la ventana de respuesta.
-    False -> no presionó, o presionó solo el botón del otro lado.
-    """
-    boton_propio.esperar_soltar()
-    boton_otro.esperar_soltar()
-
-    canal.tono(frecuencia)
-    inicio = time.ticks_ms()
-    escucho = False
-    sonando = True
-
-    while time.ticks_diff(time.ticks_ms(), inicio) < config.VENTANA_RESPUESTA_MS:
-        if sonando and time.ticks_diff(time.ticks_ms(), inicio) >= config.DURACION_TONO_MS:
-            canal.silencio()
-            sonando = False
-        if boton_propio.presionado():
-            escucho = True
-            break
-        time.sleep_ms(5)
-
-    canal.silencio()
-    boton_propio.esperar_soltar()
-    time.sleep_ms(config.PAUSA_ENTRE_TONOS_MS)
-    return escucho
-
-
-def ejecutar_prueba():
-    """Mide derecho e izquierdo para cada frecuencia y arma el diccionario DatosOido."""
-    frecuencias = list(config.FRECUENCIAS_HZ)
-    derecho = []
-    izquierdo = []
-
-    for f in frecuencias:
-        print("Oído derecho,", f, "Hz")
-        derecho.append(probar_tono(canal_derecho, boton_derecho, boton_izquierdo, f))
-    for f in frecuencias:
-        print("Oído izquierdo,", f, "Hz")
-        izquierdo.append(probar_tono(canal_izquierdo, boton_izquierdo, boton_derecho, f))
-
-    return {
-        "frecuencias_hz": frecuencias,
-        "resultados_oido_derecho": derecho,
-        "resultados_oido_izquierdo": izquierdo,
-    }
-
-
-def esperar_inicio():
-    """Espera que se presionen ambos botones a la vez."""
-    print("Presione ambos botones para iniciar...")
-    while not (boton_derecho.presionado() and boton_izquierdo.presionado()):
-        time.sleep_ms(50)
-    boton_derecho.esperar_soltar()
-    boton_izquierdo.esperar_soltar()
-    parpadear(2)
-    time.sleep_ms(500)
+def preparar():
+    """Conecta a WiFi y obtiene dispositivo_id; reintenta hasta lograrlo."""
+    while True:
+        try:
+            conectar_wifi()
+            return obtener_dispositivo_id()
+        except Exception as e:
+            print("Error de inicio:", e)
+            time.sleep(5)
 
 
 # ------------------------------------------------------------------- main
 def main():
-    parpadear(1)
-    conectar_wifi()
-    dispositivo_id = obtener_dispositivo_id()
-    print("dispositivo_id:", dispositivo_id)
-
-    pendiente = None  # payload no enviado (se reintenta sin repetir la prueba)
+    dispositivo_id = preparar()
+    print("dispositivo_id:", dispositivo_id, "- listo, esperando respuestas del joystick")
 
     while True:
-        esperar_inicio()
-
-        if pendiente is None:
-            datos = ejecutar_prueba()
-            pendiente = {
-                "episodio_id": config.EPISODIO_ID,
-                "dispositivo_id": dispositivo_id,
-                "origen": config.ORIGEN,
-                "data": datos,
-            }
-            print(ujson.dumps(pendiente))
-
-        try:
-            conectar_wifi()
-            ok = enviar_resultado(pendiente)
-        except Exception as e:
-            print("Error:", e)
-            ok = False
-
-        if ok:
-            print("Resultado guardado (201).")
-            parpadear(3)
-            pendiente = None
-        else:
-            print("No se pudo guardar. Presione ambos botones para reintentar el envío.")
-            parpadear(6, 80)
+        gesto = joystick.esperar_gesto()
+        escucho = gesto == 1  # arriba = sí, abajo = no
+        print("Respuesta:", "SI" if escucho else "NO")
+        if not enviar_respuesta(dispositivo_id, escucho):
+            print("No se pudo enviar la respuesta; el paciente puede repetir el movimiento.")
+        joystick.esperar_centro()
 
 
 main()

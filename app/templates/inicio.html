@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}Prueba de Audiometría · Tótem{% endblock %}
+
+{% block content %}
+<style>
+  .portada-audiometria {
+    display: grid;
+    grid-template-columns: 1.1fr .9fr;
+    align-items: center;
+    gap: clamp(1.5rem, 5vw, 3.5rem);
+    overflow: hidden;
+    min-height: 390px;
+    padding: clamp(1.5rem, 5vw, 3.5rem);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: linear-gradient(125deg, #fff 48%, #e7f2ee 48%);
+    box-shadow: 0 12px 32px rgba(23, 51, 47, .08);
+    animation: arrive .35s ease-out both;
+  }
+  .portada-contenido { position: relative; z-index: 1; }
+  .portada-etiqueta {
+    display: inline-block;
+    margin-bottom: 1rem;
+    padding: .4rem .75rem;
+    border-radius: 999px;
+    color: var(--teal-dark);
+    background: #e8f2ef;
+    font-size: .8rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .portada-audiometria h1 { max-width: 12ch; margin-bottom: .8rem; }
+  .portada-descripcion { max-width: 42ch; margin: 0 0 1.5rem; color: var(--muted); }
+  .portada-pasos { display: flex; flex-wrap: wrap; gap: .55rem 1.1rem; margin: 0 0 1.6rem; padding: 0; list-style: none; }
+  .portada-pasos li { display: flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .9rem; }
+  .paso-numero {
+    display: grid;
+    width: 1.5rem;
+    aspect-ratio: 1;
+    place-items: center;
+    border-radius: 50%;
+    color: white;
+    background: var(--teal);
+    font-size: .78rem;
+    font-weight: 700;
+  }
+  #btn-comenzar {
+    min-width: 10rem;
+    min-height: 3.1rem;
+    border-radius: 8px;
+    font-size: 1.05rem;
+  }
+  .portada-aviso { min-height: 1.5rem; margin: .85rem 0 0; color: var(--coral); }
+  .portada-ilustracion { width: 100%; max-width: 340px; justify-self: center; }
+  .portada-ilustracion svg { display: block; width: 100%; height: auto; }
+  @media (max-width: 640px) {
+    .portada-audiometria { grid-template-columns: 1fr; gap: .5rem; background: #fff; }
+    .portada-ilustracion { width: min(75%, 230px); grid-row: 1; }
+    .portada-contenido { grid-row: 2; }
+    .portada-audiometria h1 { max-width: none; }
+  }
+</style>
+
+<section class="portada-audiometria" aria-labelledby="titulo-audiometria">
+  <div class="portada-contenido">
+    <span class="portada-etiqueta">Evaluación auditiva</span>
+    <h1 id="titulo-audiometria">Prueba de Audiometría</h1>
+    <p class="portada-descripcion">
+      Una experiencia sencilla para explorar cómo percibe distintos sonidos cada oído.
+      Use auriculares y siga las instrucciones en pantalla.
+    </p>
+    <ul class="portada-pasos" aria-label="Pasos de la prueba">
+      <li><span class="paso-numero">1</span> Lea las instrucciones</li>
+      <li><span class="paso-numero">2</span> Escuche los tonos</li>
+      <li><span class="paso-numero">3</span> Responda</li>
+    </ul>
+    <button id="btn-comenzar" type="button">Comenzar</button>
+    <p id="inicio-mensaje" class="portada-aviso" role="status" aria-live="polite"></p>
+  </div>
+
+  <div class="portada-ilustracion">
+    <svg viewBox="0 0 360 320" role="img" aria-labelledby="ilustracion-titulo ilustracion-descripcion">
+      <title id="ilustracion-titulo">Ilustración de ondas sonoras y un oído</title>
+      <desc id="ilustracion-descripcion">Ondas de sonido rodean una ilustración estilizada de un oído.</desc>
+      <circle cx="180" cy="160" r="138" fill="#d9ebe5"/>
+      <circle cx="180" cy="160" r="111" fill="#eef6f2"/>
+      <path d="M104 148c0-43 32-76 76-76s76 33 76 76c0 28-14 47-34 64-13 11-18 22-18 38 0 16-11 27-27 27-17 0-28-12-28-29"
+            fill="none" stroke="#087e72" stroke-linecap="round" stroke-width="15"/>
+      <path d="M146 151c0-20 14-35 34-35s35 15 35 35c0 16-8 25-20 36-11 10-17 21-17 37"
+            fill="none" stroke="#c65a45" stroke-linecap="round" stroke-width="10"/>
+      <path d="M83 125c-12 20-12 48 0 68M62 111c-19 29-19 67 0 96M277 125c12 20 12 48 0 68M298 111c19 29 19 67 0 96"
+            fill="none" stroke="#087e72" stroke-linecap="round" stroke-width="7" opacity=".7"/>
+      <circle cx="179" cy="218" r="8" fill="#e8a23a"/>
+      <path d="M168 270c12 10 31 10 43 0" fill="none" stroke="#087e72" stroke-linecap="round" stroke-width="6"/>
+    </svg>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/inicio.js') }}?v=3"></script>
+{% endblock %}

@@ -4,7 +4,7 @@ Repositorio base del proyecto educativo **Tótem de triaje preventivo**, desarro
 
 El objetivo de esta base es que los equipos de estudiantes puedan desarrollar módulos independientes dentro de una misma aplicación, respetando una estructura común y el **Contrato API v1** definido para el proyecto.
 
-> **Estado del proyecto:** la infraestructura general ya funciona y permite registrar pacientes, iniciar episodios de atención, consultar dispositivos y guardar resultados de un módulo de demostración. Los módulos clínicos de los seis grupos todavía deben ser desarrollados por los estudiantes.
+> **Estado del proyecto:** la infraestructura, el registro de pacientes y episodios, el módulo de oído y los informes están integrados. El análisis con IA es opcional y orientativo; no reemplaza reglas clínicas aprobadas ni la revisión profesional. Los módulos de signos vitales, ECG, glucemia, boca y vista todavía deben integrarse.
 
 ---
 
@@ -24,6 +24,10 @@ Actualmente el repositorio incluye:
 - módulo para iniciar y consultar episodios de atención;
 - módulo para consultar dispositivos;
 - módulo de demostración `demo_ambiente`;
+- flujo web para registrar o reutilizar pacientes e iniciar un episodio;
+- evaluación auditiva con captura manual o ESP32;
+- reducción automática de la ganancia digital de los tonos cuando se informa un problema auditivo; esta reducción no representa ni garantiza un nivel calibrado en dB SPL;
+- generación de informe HTML con integración opcional de análisis orientativo mediante IA;
 - servicio común para almacenar resultados de cualquier módulo;
 - datos ficticios de demostración;
 - pruebas automáticas con Pytest;
@@ -31,12 +35,9 @@ Actualmente el repositorio incluye:
 
 El proyecto **todavía no incluye**:
 
-- reglas clínicas definitivas;
-- clasificación por semáforo;
-- generación del informe final;
-- inteligencia artificial;
+- reglas clínicas definitivas y clasificación clínica validada;
 - frontend definitivo;
-- módulos de signos vitales, ECG, glucemia, boca, vista u oído.
+- módulos de signos vitales, ECG, glucemia, boca y vista.
 
 Estos componentes se incorporarán progresivamente durante el desarrollo del proyecto.
 
@@ -215,6 +216,21 @@ Uvicorn running on http://127.0.0.1:8000
 la API está funcionando correctamente.
 
 ---
+
+### Activar el análisis opcional con IA
+
+El análisis se ejecuta automáticamente al generar el informe si hay una clave de Gemini. Considera las respuestas declaradas en el formulario auditivo junto con las mediciones; son orientativas y no equivalen a diagnósticos confirmados. Obtenga una clave en [Google AI Studio](https://aistudio.google.com/app/apikey). En PowerShell, copie `.env.example` como `.env`, configure estos valores localmente y reinicie Uvicorn:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+```text
+GEMINI_API_KEY=pega_aqui_tu_clave
+GEMINI_MODEL=gemini-3.8-flash
+```
+
+No comparta ni suba `.env` al repositorio. La pantalla de resumen informa si la integración está activa. Sin clave, los informes siguen funcionando y el triaje permanece pendiente de revisión profesional.
 
 ## 10. Abrir Swagger
 

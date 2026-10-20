@@ -36,8 +36,13 @@
     <ul id="lista-pendientes"></ul>
   </section>
 
+  <section aria-labelledby="h-ia">
+    <h2 id="h-ia">Integración de análisis con IA</h2>
+    <p id="estado-configuracion-ia" role="status">Comprobando configuración…</p>
+  </section>
+
   <div class="acciones">
-    <button type="button" id="btn-generar">Generar informe final</button>
+    <button type="button" id="btn-generar">Generar informe y análisis con IA</button>
     <button type="button" class="secundario" id="btn-cerrar">Cerrar episodio</button>
   </div>
 
@@ -46,10 +51,11 @@
   <section id="seccion-informe" hidden aria-labelledby="h-informe">
     <h2 id="h-informe">Informe final</h2>
     <p class="leyenda" id="leyenda-informe"></p>
+    <p id="estado-analisis-ia" role="status"></p>
     <p class="acciones">
       <a id="enlace-html" href="#" target="_blank" rel="noopener">Abrir informe</a>
       &nbsp;|&nbsp;
-      <a id="enlace-pdf" href="#" target="_blank" rel="noopener">Imprimir / Guardar como PDF</a>
+      <a id="enlace-pdf" href="#" target="_blank" rel="noopener">Imprimir / Guardar como PDF desde el informe</a>
     </p>
     <iframe id="vista-informe" title="Vista previa del informe"
             style="width:100%;height:1000px;border:1px solid #cbd5e1"></iframe>
@@ -58,5 +64,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', path='js/resumen.js') }}?v=4"></script>
+<script src="{{ url_for('static', path='js/resumen.js') }}?v=7"></script>
 {% endblock %}

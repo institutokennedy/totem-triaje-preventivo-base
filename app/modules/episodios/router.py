@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
@@ -13,6 +15,58 @@ router = APIRouter(
     prefix="/api/v1/episodios",
     tags=["Episodios"],
 )
+
+AUDIO_DEMO_EMAIL = "audiometria-demo@invalid.local"
+AUDIO_DEMO_DNI_RANGE = range(99999999, 99989999, -1)
+
+
+@router.post(
+    "/audiometria",
+    response_model=EpisodioRespuesta,
+    status_code=201,
+    summary="Iniciar una nueva prueba de audiometría",
+)
+def crear_episodio_audiometria(
+    session: Session = Depends(get_session),
+):
+    paciente = session.exec(
+        select(Paciente).where(Paciente.email == AUDIO_DEMO_EMAIL)
+    ).first()
+
+    if paciente is None:
+        dnis_existentes = set(session.exec(select(Paciente.dni)).all())
+        dni_disponible = next(
+            (
+                str(dni)
+                for dni in AUDIO_DEMO_DNI_RANGE
+                if str(dni) not in dnis_existentes
+            ),
+            None,
+        )
+        if dni_disponible is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo preparar el paciente ficticio de audiometría",
+            )
+        paciente = Paciente(
+            dni=dni_disponible,
+            nombre="Paciente",
+            apellido="De prueba",
+            fecha_nacimiento=date(2000, 1, 1),
+            email=AUDIO_DEMO_EMAIL,
+        )
+        session.add(paciente)
+        session.commit()
+        session.refresh(paciente)
+
+    episodio = EpisodioAtencion(
+        paciente_id=paciente.id,
+        tipo_circuito="DEMOSTRACION_OIDO",
+    )
+    session.add(episodio)
+    session.commit()
+    session.refresh(episodio)
+    return episodio
 
 
 @router.post(

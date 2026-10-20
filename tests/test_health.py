@@ -21,7 +21,7 @@ def test_swagger_openapi_incluye_las_rutas(client):
     assert "/api/v1/demo-ambiente/simular" not in paths
 
 
-def test_lifespan_crea_solamente_las_tablas_comunes(client, test_engine):
+def test_lifespan_crea_tablas_comunes_e_informe(client, test_engine):
     tables = set(inspect(test_engine).get_table_names())
 
     assert tables == {
@@ -29,6 +29,7 @@ def test_lifespan_crea_solamente_las_tablas_comunes(client, test_engine):
         "episodio_atencion",
         "dispositivo",
         "resultado_modulo",
+        "informe",
     }
 
 

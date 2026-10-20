@@ -1,19 +1,28 @@
 import json
-from datetime import datetime
+from datetime import date, datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from starlette.requests import Request
 from sqlmodel import Session, select
 
 # Contrato del repo base: get_session y los modelos comunes se consumen sin modificarse.
 from app.core.database import get_session
 from app.models import EpisodioAtencion, Paciente, ResultadoModulo
+from app.modules.informes import analisis_ia
 from app.modules.informes.models import Informe
 from app.reporte.reporte import LEYENDA, construir_reporte, render_html
 
 router = APIRouter(prefix="/api/v1/episodios", tags=["informes"])
+ia_router = APIRouter(prefix="/api/v1/analisis-ia", tags=["Análisis IA"])
+pages_router = APIRouter(tags=["informes-paginas"])
+templates = Jinja2Templates(
+    directory=str(Path(__file__).resolve().parents[2] / "templates")
+)
 
 LEYENDA_LEGAL = "Informe preventivo. No constituye un diagnóstico médico."
 
@@ -30,6 +39,16 @@ MODULOS = {
 
 class InformeCreate(BaseModel):
     tipo_informe: str = "COMPLETO"
+
+
+@ia_router.get("/estado")
+def estado_analisis_ia():
+    return analisis_ia.estado_configuracion()
+
+
+@pages_router.get("/resumen", include_in_schema=False)
+def pagina_resumen(request: Request):
+    return templates.TemplateResponse(request, "oido/resumen.html")
 
 
 def _serializar(informe: Informe) -> dict:
@@ -96,9 +115,10 @@ def _resultados_por_modulo(session: Session, episodio_id: int) -> dict:
             data = json.loads(r.data_json)
         except (TypeError, ValueError):
             data = r.data_json
+        origen = data.pop("_origen", None) if isinstance(data, dict) else None
         agrupados.setdefault(r.modulo, []).append(
             {
-                "origen": getattr(r, "origen", None),
+                "origen": origen or getattr(r, "origen", None),
                 "dispositivo_id": getattr(r, "dispositivo_id", None),
                 "data": data,
             }
@@ -110,6 +130,13 @@ def _estado_modulos(agrupados: dict):
     completados = [nombre for clave, nombre in MODULOS.items() if clave in agrupados]
     pendientes = [nombre for clave, nombre in MODULOS.items() if clave not in agrupados]
     return completados, pendientes
+
+
+def _edad_en_anios(fecha_nacimiento: date) -> int:
+    hoy = date.today()
+    return hoy.year - fecha_nacimiento.year - (
+        (hoy.month, hoy.day) < (fecha_nacimiento.month, fecha_nacimiento.day)
+    )
 
 
 @router.get("/{episodio_id}/resumen")
@@ -134,6 +161,16 @@ def generar_informe(
     episodio, paciente = _obtener_episodio_y_paciente(session, episodio_id)
     agrupados = _resultados_por_modulo(session, episodio_id)
     completados, pendientes = _estado_modulos(agrupados)
+    analisis, motivo_analisis = analisis_ia.analizar_resultados(
+        edad=_edad_en_anios(paciente.fecha_nacimiento),
+        por_modulo=agrupados,
+        pendientes=pendientes,
+    )
+    estado_analisis = (
+        {"disponible": True, "motivo": None}
+        if analisis is not None
+        else {"disponible": False, "motivo": motivo_analisis}
+    )
 
     contenido = {
         "leyenda": LEYENDA,
@@ -142,8 +179,16 @@ def generar_informe(
         "modulos_completados": completados,
         "modulos_pendientes": pendientes,
         "resultados": agrupados,
+        "analisis_ia": analisis,
+        "analisis_ia_estado": estado_analisis,
         "generado_en": datetime.now().isoformat(),
-        "reporte": construir_reporte(paciente, agrupados, pendientes),
+        "reporte": construir_reporte(
+            paciente,
+            agrupados,
+            pendientes,
+            analisis_ia=analisis,
+            analisis_ia_estado=estado_analisis,
+        ),
     }
 
     previos = session.exec(select(Informe).where(Informe.episodio_id == episodio_id)).all()

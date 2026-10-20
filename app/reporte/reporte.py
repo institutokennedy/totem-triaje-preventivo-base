@@ -120,7 +120,14 @@ def _lista(valor) -> list:
 
 
 # ------------------------------------------------------------------ construcción
-def construir_reporte(paciente, por_modulo: dict, pendientes: list, ahora: datetime | None = None) -> dict:
+def construir_reporte(
+    paciente,
+    por_modulo: dict,
+    pendientes: list,
+    ahora: datetime | None = None,
+    analisis_ia: dict | None = None,
+    analisis_ia_estado: dict | None = None,
+) -> dict:
     ahora = ahora or datetime.now()
 
     nombre = " ".join(
@@ -146,6 +153,21 @@ def construir_reporte(paciente, por_modulo: dict, pendientes: list, ahora: datet
     der, izq = _resumen_oido(por_modulo)
     mediciones.append(["Audición oído derecho", der])
     mediciones.append(["Audición oído izquierdo", izq])
+    registros_oido = por_modulo.get("oido")
+    datos_oido = registros_oido[-1].get("data") if registros_oido else {}
+    nivel_senal = (
+        datos_oido.get("nivel_senal", "NORMAL")
+        if isinstance(datos_oido, dict)
+        else "NORMAL"
+    )
+    mediciones.append(
+        [
+            "Nivel de señal auditiva",
+            "Reducido por autoinforme"
+            if nivel_senal == "REDUCIDO_POR_AUTOINFORME"
+            else "Normal (no calibrado)",
+        ]
+    )
 
     triaje = _datos_triaje(por_modulo)
     estado = str(triaje.get("estado") or triaje.get("estado_triaje") or "").strip().upper()
@@ -168,6 +190,8 @@ def construir_reporte(paciente, por_modulo: dict, pendientes: list, ahora: datet
         "paciente": datos_paciente,
         "mediciones": mediciones,
         "triaje": {"estado": estado or "PENDIENTE", "subindices": subindices},
+        "analisis_ia": analisis_ia,
+        "analisis_ia_estado": analisis_ia_estado,
         "alertas": alertas,
         "leyenda": LEYENDA,
     }
@@ -216,6 +240,37 @@ def render_html(reporte: dict) -> str:
 
     subindices = [f"Subíndice {n}: {v}" for n, v in reporte["triaje"]["subindices"]]
     bloque_sub = _lista_html(subindices, "• ") if subindices else ""
+    analisis_ia = reporte.get("analisis_ia")
+    bloque_analisis_ia = ""
+    if isinstance(analisis_ia, dict):
+        motivos = _lista_html(analisis_ia.get("motivos", []), "• ")
+        alertas_ia = _lista_html(analisis_ia.get("alertas", []), "• ")
+        subindices_ia = _lista_html(
+            [
+                f"{nombre}: {estado}"
+                for nombre, estado in analisis_ia.get("subindices", {}).items()
+            ],
+            "• ",
+        )
+        bloque_analisis_ia = (
+            "<h2>Análisis orientativo asistido por IA</h2>"
+            '<p><strong>Requiere revisión profesional; no constituye diagnóstico '
+            "ni clasificación clínica validada.</strong></p>"
+            f'<p><strong>Nivel sugerido (no validado):</strong> '
+            f'{escape(str(analisis_ia.get("estado", "PENDIENTE")))}</p>'
+            f'<p>{escape(str(analisis_ia.get("resumen", "")))}</p>'
+            f"<h3>Subíndices sugeridos (no validados)</h3>{subindices_ia}"
+            f"<h3>Motivos</h3>{motivos}"
+            f"<h3>Alertas</h3>{alertas_ia}"
+            f'<p><strong>Recomendación orientativa:</strong> '
+            f'{escape(str(analisis_ia.get("recomendacion", "")))}</p>'
+        )
+    elif isinstance(reporte.get("analisis_ia_estado"), dict):
+        bloque_analisis_ia = (
+            "<h2>Análisis orientativo asistido por IA</h2>"
+            "<p>No disponible. El triaje permanece pendiente de revisión "
+            "profesional.</p>"
+        )
 
     return (
         '<!doctype html><html lang="es"><head><meta charset="utf-8">'
@@ -230,6 +285,7 @@ def render_html(reporte: dict) -> str:
         "<h2>Resultado preventivo general</h2>"
         f'<div class="estado" style="background:{fondo};color:{texto}">'
         f"ESTADO DEL TRIAJE: {escape(estado)}</div>" + bloque_sub +
+        bloque_analisis_ia +
         "<h2>Observaciones / Alertas</h2>" + _lista_html(reporte["alertas"], "- ") +
         f'<p class="leyenda">{escape(reporte["leyenda"])}</p>'
         "</div></div>"

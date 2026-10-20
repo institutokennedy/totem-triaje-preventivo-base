@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
@@ -9,6 +9,6 @@ class Informe(SQLModel, table=True):
     episodio_id: int = Field(foreign_key="episodio_atencion.id")
     tipo_informe: str
     contenido_json: str
-    fecha_hora: datetime = Field(default_factory=datetime.utcnow)
+    fecha_hora: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     estado: str = "GENERADO"
     version: int = 1

@@ -8,26 +8,16 @@ WIFI_PASSWORD = "24356627"
 SERVER_URL = "http://192.168.1.50:8000"
 
 # --- Identificación ---
-# Episodio activo en el software (debe existir en la BD, si no la API responde 404).
-EPISODIO_ID = 1
 CODIGO_DISPOSITIVO = "OIDO-001"
 NOMBRE_DISPOSITIVO = "Audiometría"
 TIPO_DISPOSITIVO = "OIDO"
 ORIGEN = "ESP32"
 
-# --- Pines (GPIO) ---
-PIN_SALIDA_DERECHO = 25     # canal de audio derecho (buzzer/auricular + resistencia)
-PIN_SALIDA_IZQUIERDO = 26   # canal de audio izquierdo
-PIN_BOTON_DERECHO = 32      # botón "escuché del lado derecho" (a GND, pull-up interno)
-PIN_BOTON_IZQUIERDO = 33    # botón "escuché del lado izquierdo" (a GND, pull-up interno)
-PIN_LED = 2                 # LED integrado
-
-# --- Prueba ---
-FRECUENCIAS_HZ = [500, 1000, 2000, 4000]
-DURACION_TONO_MS = 1500        # tiempo que suena el tono
-VENTANA_RESPUESTA_MS = 3500    # tiempo total para responder (incluye el tono)
-PAUSA_ENTRE_TONOS_MS = 800
-VOLUMEN_PORCENTAJE = 50        # ciclo de trabajo del PWM (1-50); calibrar con el hardware real
+# --- Joystick analógico (solo eje vertical) ---
+PIN_JOY_Y = 34              # eje Y (VRy). Usar un pin ADC1 (32-39): ADC2 no funciona con WiFi
+INVERTIR_EJE_Y = False      # False: valor ADC alto = ARRIBA. Poner True si "arriba" se detecta como "abajo"
+UMBRAL_DESVIO = 0.25        # fracción del rango ADC que hay que desviar desde el centro (0.1-0.5)
+TIEMPO_CONFIRMACION_MS = 80 # tiempo mínimo sosteniendo el movimiento para validarlo
 
 # --- Comunicación ---
 INTENTOS_ENVIO = 3
