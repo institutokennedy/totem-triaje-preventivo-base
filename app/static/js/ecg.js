@@ -2,33 +2,28 @@
   "use strict";
 
   const API = "/api/v1";
-  const DEVICE_CODE = "ECG-001";
   const app = document.getElementById("ecg-app");
   const stepPanels = [
     "#paso-preparacion",
     "#paso-electrodos",
-    "#paso-conexiones",
     "#paso-captura",
     "#paso-resumen",
-    "#paso-guardar",
   ].map((selector) => app.querySelector(selector));
   const stepNames = [
-    "Preparación del paciente",
-    "Electrodos",
-    "Conexiones",
-    "Captura ECG simulada",
+    "Limpieza de la piel",
+    "Colocación de electrodos",
+    "Generación del ECG simulado",
     "Resumen de captura",
-    "Asociar a un episodio y guardar (opcional)",
   ];
   const navItems = [...app.querySelectorAll(".steps li")];
   let currentStep = 0;
   let capture = null;
-  let device = null;
-  let episodeId = null;
   let isCapturing = false;
   let stopRequested = false;
+  let flowFinalized = false;
 
-  function showStep(index) {
+  function showStep(index, preserveError = false) {
+    if (flowFinalized) return;
     currentStep = index;
     app.dataset.step = String(index);
     stepPanels.forEach((panel, panelIndex) => { panel.hidden = panelIndex !== index; });
@@ -40,9 +35,8 @@
     app.querySelector("#paso-anterior").disabled = index === 0 || isCapturing;
     const next = app.querySelector("#paso-siguiente");
     next.hidden = index === stepPanels.length - 1;
-    next.disabled = isCapturing || (index === 3 && capture === null);
-    app.querySelector("#guardar-resultado").disabled = capture === null;
-    app.querySelector("#error").hidden = true;
+    next.disabled = isCapturing || (index === 1 && !app.querySelector("#aceptar-referencia-electrodos").checked) || (index === 2 && capture === null);
+    if (!preserveError) app.querySelector("#error").hidden = true;
   }
 
   function reportError(error) {
@@ -84,6 +78,10 @@
     app.querySelector("#unidad-final").textContent = "—";
   }
 
+  function hasTechnicalInterference(samples) {
+    return samples.length > 1 && samples.every((sample) => sample === samples[0]);
+  }
+
   async function presentSamples(data) {
     const list = app.querySelector("#muestras-vistas");
     list.replaceChildren();
@@ -118,9 +116,10 @@
   }
 
   async function startSimulation() {
-    if (isCapturing) return;
+    if (isCapturing || flowFinalized) return;
     capture = null;
     stopRequested = false;
+    app.querySelector("#interferencia-panel").hidden = true;
     clearSignal();
     isCapturing = true;
     app.querySelector("#iniciar-simulacion").disabled = true;
@@ -140,6 +139,11 @@
         throw new Error("La respuesta del simulador no cumple el esquema técnico de datos ECG.");
       }
       await presentSamples(data);
+      if (hasTechnicalInterference(capture.muestras)) {
+        capture = null;
+        app.querySelector("#estado-simulacion").textContent = "La señal presenta una condición técnica para repetir o finalizar; no se conserva en el resumen.";
+        app.querySelector("#interferencia-panel").hidden = false;
+      }
     } catch (error) {
       app.querySelector("#estado-simulacion").textContent = "No se completó la simulación.";
       reportError(error);
@@ -147,90 +151,28 @@
       isCapturing = false;
       app.querySelector("#iniciar-simulacion").disabled = false;
       app.querySelector("#detener-simulacion").hidden = true;
-      showStep(currentStep);
+      showStep(currentStep, true);
     }
   }
 
-  async function resolvePersistenceReferences() {
-    const id = Number(app.querySelector("#episodio-id").value);
-    if (!Number.isInteger(id) || id <= 0) {
-      throw new Error("Para guardar, ingresá un episodio_id entero mayor que cero.");
-    }
-    const [episode, devices] = await Promise.all([
-      requestJson(`${API}/episodios/${id}`, { headers: { Accept: "application/json" } }),
-      requestJson(`${API}/dispositivos`, { headers: { Accept: "application/json" } }),
-    ]);
-    if (episode.id !== id || episode.estado !== "INICIADO") {
-      throw new Error("El episodio debe existir y estar en estado INICIADO para guardar el resultado.");
-    }
-    device = devices.find((item) => item.codigo === DEVICE_CODE && item.tipo === "ECG" && item.activo === true);
-    if (!device || !Number.isInteger(device.id) || device.id <= 0) {
-      throw new Error(`No se encontró un dispositivo ECG activo con código ${DEVICE_CODE}. No se creó ningún dispositivo.`);
-    }
-    episodeId = id;
-  }
-
-  async function saveCapture() {
-    if (!capture) {
-      reportError(new Error("Primero completá una simulación."));
-      return;
-    }
-    const status = app.querySelector("#estado-guardado");
-    status.textContent = "Verificando episodio y dispositivo existentes…";
-    app.querySelector("#guardar-resultado").disabled = true;
-    try {
-      await resolvePersistenceReferences();
-      const result = await requestJson(`${API}/ecg/resultados`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          episodio_id: episodeId,
-          dispositivo_id: device.id,
-          origen: "SIMULADOR",
-          data: capture,
-        }),
-      });
-      status.textContent = `Resultado ${result.resultado_id} guardado para el episodio ${episodeId}. Origen: SIMULADOR.`;
-      app.querySelector("#consultar-resultados").hidden = false;
-    } catch (error) {
-      status.textContent = "No se guardó ningún resultado.";
-      reportError(error);
-    } finally {
-      app.querySelector("#guardar-resultado").disabled = false;
-    }
-  }
-
-  async function consultResults() {
-    if (!episodeId) {
-      app.querySelector("#estado-consulta").textContent = "Guardá primero o ingresá un episodio en la etapa opcional.";
-      return;
-    }
-    const status = app.querySelector("#estado-consulta");
-    const list = app.querySelector("#resultados-guardados");
-    list.replaceChildren();
-    try {
-      const result = await requestJson(`${API}/ecg/resultados/${episodeId}`, {
-        headers: { Accept: "application/json" },
-      });
-      status.textContent = result.resultados.length
-        ? `${result.resultados.length} resultado(s) persistido(s) para el episodio ${episodeId}.`
-        : `No hay resultados ECG guardados para el episodio ${episodeId}.`;
-      for (const saved of result.resultados) {
-        const item = document.createElement("li");
-        item.textContent = `Resultado ${saved.id}: ${saved.data.muestras.length} muestras, ${saved.data.frecuencia_muestreo_hz} Hz, ${saved.data.unidad}.`;
-        list.append(item);
-      }
-    } catch (error) {
-      status.textContent = "No se pudieron consultar los resultados.";
-      reportError(error);
-    }
+  function finishCaptureFlow() {
+    flowFinalized = true;
+    stepPanels.forEach((panel) => { panel.hidden = true; });
+    app.querySelector(".steps").hidden = true;
+    app.querySelector("#captura-finalizada").hidden = false;
+    app.querySelector("#paso-actual").textContent = "Captura finalizada";
+    app.querySelector("nav").hidden = true;
   }
 
   app.querySelector("#paso-anterior").addEventListener("click", () => {
     if (currentStep > 0 && !isCapturing) showStep(currentStep - 1);
   });
   app.querySelector("#paso-siguiente").addEventListener("click", () => {
-    if (currentStep < stepPanels.length - 1 && !(currentStep === 3 && !capture)) showStep(currentStep + 1);
+    if (currentStep < stepPanels.length - 1 && !(currentStep === 2 && !capture)) showStep(currentStep + 1);
+  });
+  app.querySelector("#aceptar-referencia-electrodos").addEventListener("change", (event) => {
+    app.querySelector("#paso-siguiente").disabled = !event.target.checked;
+    if (currentStep === 1) showStep(1);
   });
   app.querySelector("#iniciar-simulacion").addEventListener("click", startSimulation);
   app.querySelector("#detener-simulacion").addEventListener("click", () => {
@@ -239,10 +181,11 @@
   });
   app.querySelector("#repetir-simulacion").addEventListener("click", () => {
     capture = null;
-    showStep(3);
+    showStep(2);
     startSimulation();
   });
-  app.querySelector("#guardar-resultado").addEventListener("click", saveCapture);
-  app.querySelector("#consultar-resultados").addEventListener("click", consultResults);
+  app.querySelector("#finalizar-simulacion").addEventListener("click", finishCaptureFlow);
+  app.querySelector("#repetir-ecg").addEventListener("click", startSimulation);
+  app.querySelector("#finalizar-ecg").addEventListener("click", finishCaptureFlow);
   showStep(0);
 })();

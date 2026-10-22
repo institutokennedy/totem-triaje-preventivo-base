@@ -33,6 +33,7 @@ def pagina_ecg() -> FileResponse:
     return FileResponse(
         APP_DIR / "templates" / "modulos" / "ecg.html",
         media_type="text/html",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -42,6 +43,7 @@ def frontend_ecg() -> FileResponse:
     return FileResponse(
         APP_DIR / "static" / "js" / "ecg.js",
         media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
     )
 
 
