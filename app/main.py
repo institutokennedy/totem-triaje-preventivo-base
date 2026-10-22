@@ -10,7 +10,7 @@ from app.modules.pacientes.router import router as pacientes_router
 from app.modules.episodios.router import router as episodios_router
 from app.modules.dispositivos.router import router as dispositivos_router
 from app.modules.demo_ambiente.router import router as demo_ambiente_router
-
+from app.modules.ecg.router import router as ecg_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
     application.include_router(episodios_router)
     application.include_router(dispositivos_router)
     application.include_router(demo_ambiente_router)
+    application.include_router(ecg_router)
 
     return application
 
