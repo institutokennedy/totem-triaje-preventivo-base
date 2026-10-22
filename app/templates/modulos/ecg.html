@@ -16,14 +16,17 @@
     .steps li[aria-current="step"] { background: #1d4ed8; color: white; border-color: #1d4ed8; }
     .step-panel { border-top: 1px solid #cbd5e1; padding-top: 1rem; }
     .visual { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; }
-    .electrode { border: 1px solid #cbd5e1; border-radius: .6rem; padding: .8rem; width: 9rem; text-align: center; }
+    .electrode { border: 1px solid #cbd5e1; border-radius: .6rem; padding: .8rem; width: 11rem; text-align: center; }
     .pad { display: inline-grid; place-items: center; width: 3.5rem; height: 3.5rem; border: .45rem solid #475569; border-radius: 50%; background: #e2e8f0; font-weight: 700; }
+    .pad.red { border-color: #b91c1c; }
+    .pad.yellow { border-color: #ca8a04; }
+    .pad.green { border-color: #15803d; }
     .connection { border-left: 4px solid #64748b; padding: .6rem .8rem; margin: .5rem 0; }
     .signal { width: 100%; max-width: 42rem; border: 1px solid #94a3b8; background: #f8fafc; }
     button { margin: .5rem .5rem .5rem 0; padding: .65rem 1rem; cursor: pointer; }
     button:disabled { cursor: not-allowed; opacity: .55; }
     label { display: block; margin: .8rem 0; }
-    input { display: block; box-sizing: border-box; max-width: 22rem; width: 100%; padding: .5rem; }
+    select { display: block; box-sizing: border-box; max-width: 28rem; width: 100%; padding: .5rem; }
     [hidden] { display: none !important; }
     li.sample { font-variant-numeric: tabular-nums; }
   </style>
@@ -32,47 +35,45 @@
   <main id="ecg-app" data-step="0">
     <h1>Recorrido educativo de captura ECG</h1>
     <p class="notice"><strong>Modo de esta pantalla: SIMULACIÓN.</strong> No se ha comprobado ni conectado un dispositivo físico. La simulación usa muestras ficticias del simulador del proyecto.</p>
-    <p id="paso-actual" class="status" role="status">Paso 1 de 6: Preparación del paciente</p>
+    <p id="paso-actual" class="status" role="status">Paso 1 de 4: Limpieza de la piel</p>
     <ol class="steps" aria-label="Pasos del recorrido">
-      <li aria-current="step">Preparación</li>
+      <li aria-current="step">Limpieza</li>
       <li>Electrodos</li>
-      <li>Conexiones</li>
       <li>Captura</li>
       <li>Resumen</li>
-      <li>Guardar (opcional)</li>
     </ol>
 
     <section id="paso-preparacion" class="step-panel" aria-labelledby="preparacion-titulo">
-      <h2 id="preparacion-titulo">1. Preparación del paciente</h2>
-      <p>Explicá el procedimiento y prepará el espacio según el protocolo aprobado por tu institución. Este recorrido educativo no solicita datos personales.</p>
-      <p>Podés continuar con la preparación y la simulación sin ingresar un episodio.</p>
+      <h2 id="preparacion-titulo">1. Limpieza de las extremidades</h2>
+      <p>Antes de colocar los electrodos, limpiá las zonas de la piel donde se colocarán y dejalas secas. Seguí el protocolo aprobado del dispositivo y de tu institución.</p>
+      <p class="notice">Esta pantalla solo genera una señal simulada: no comprueba la preparación de la piel ni la conexión de electrodos físicos.</p>
     </section>
 
     <section id="paso-electrodos" class="step-panel" aria-labelledby="electrodos-titulo" hidden>
-      <h2 id="electrodos-titulo">2. Electrodos</h2>
-      <p>La ilustración identifica los tres elementos del ejemplo. Es una referencia de componentes, no indica dónde colocarlos sobre el cuerpo.</p>
-      <div class="visual" aria-label="Representación de tres electrodos, sin ubicación anatómica">
-        <div class="electrode"><span class="pad" aria-hidden="true">1</span><p>Electrodo 1</p></div>
-        <div class="electrode"><span class="pad" aria-hidden="true">2</span><p>Electrodo 2</p></div>
-        <div class="electrode"><span class="pad" aria-hidden="true">3</span><p>Electrodo 3</p></div>
+      <h2 id="electrodos-titulo">2. Colocación de electrodos</h2>
+      <p>Referencia solicitada para esta demostración de tres electrodos:</p>
+      <div class="visual" aria-label="Referencia de colores y ubicaciones anatómicas no verificada">
+        <div class="electrode"><span class="pad red" aria-hidden="true">R</span><p><strong>Rojo</strong><br>Brazo derecho</p></div>
+        <div class="electrode"><span class="pad yellow" aria-hidden="true">A</span><p><strong>Amarillo</strong><br>Brazo izquierdo</p></div>
+        <div class="electrode"><span class="pad green" aria-hidden="true">V</span><p><strong>Verde</strong><br>Pierna izquierda</p></div>
       </div>
-      <p class="notice">El proyecto no incluye ubicaciones anatómicas aprobadas. Antes de una adquisición física, consultá la guía validada del equipo o el protocolo de tu institución; esta pantalla no sustituye esas instrucciones.</p>
-    </section>
-
-    <section id="paso-conexiones" class="step-panel" aria-labelledby="conexiones-titulo" hidden>
-      <h2 id="conexiones-titulo">3. Conexiones y estado del dispositivo</h2>
-      <p id="estado-dispositivo" class="status">Dispositivo físico: NO VERIFICADO por esta aplicación.</p>
-      <div class="connection">Electrodos y cables: la aplicación no recibe telemetría para comprobarlos. En una instalación física, verificá visualmente las conexiones según la guía aprobada del equipo.</div>
-      <div class="connection">Simulador Python: disponible a través de la aplicación. Esta es la única fuente de datos habilitada en este recorrido.</div>
-      <p>En el siguiente paso podés iniciar una simulación; no se leerá ningún sensor.</p>
+      <p class="notice"><strong>Protocolo físico no verificado:</strong> el proyecto no identifica fabricante ni modelo del equipo y no incluye su manual. Antes de colocar electrodos en una persona, contrastá estos colores y ubicaciones con el protocolo real del dispositivo y el de tu institución. No uses esta referencia como instrucción física hasta verificarla.</p>
+      <label><input id="aceptar-referencia-electrodos" type="checkbox"> Entiendo que esta referencia no está validada para uso físico y que debo contrastarla antes con el protocolo real del dispositivo.</label>
     </section>
 
     <section id="paso-captura" class="step-panel" aria-labelledby="captura-titulo" hidden>
-      <h2 id="captura-titulo">4. Captura ECG simulada</h2>
-      <p>Iniciá la simulación para recibir el lote ficticio y ver sus muestras progresivamente. Podés detener la presentación en cualquier momento.</p>
+      <h2 id="captura-titulo">3. Generación del ECG</h2>
+      <p><strong>Modo SIMULACIÓN:</strong> podés generar una señal sin seleccionar paciente ni crear episodios. No se leerá ningún sensor físico.</p>
+      <p>La comprobación técnica de esta demostración solo detecta si todas las muestras son iguales; no detecta interferencias en un dispositivo físico.</p>
       <p id="estado-simulacion" role="status">Simulación todavía no iniciada.</p>
       <button id="iniciar-simulacion" type="button">Iniciar simulación</button>
       <button id="detener-simulacion" type="button" hidden>Detener simulación</button>
+      <section id="interferencia-panel" class="notice" aria-labelledby="interferencia-titulo" hidden>
+        <h3 id="interferencia-titulo">Se detectó una interferencia en la señal del ECG. ¿Desea repetir la captura?</h3>
+        <p>La comprobación técnica detectó una señal sin variación entre muestras. Esto no es una evaluación clínica.</p>
+        <button id="repetir-ecg" type="button">Repetir ECG</button>
+        <button id="finalizar-ecg" type="button">Finalizar</button>
+      </section>
       <dl>
         <dt>Muestras presentadas</dt><dd id="cantidad-en-curso">0</dd>
       </dl>
@@ -86,7 +87,7 @@
     </section>
 
     <section id="paso-resumen" class="step-panel" aria-labelledby="resumen-titulo" hidden>
-      <h2 id="resumen-titulo">5. Resumen de captura</h2>
+      <h2 id="resumen-titulo">4. Resumen de captura</h2>
       <p class="notice"><strong>Origen: SIMULACIÓN.</strong> Las muestras son ficticias. No se adquirieron señales de un dispositivo físico.</p>
       <dl>
         <dt>Cantidad de muestras</dt><dd id="cantidad-final">—</dd>
@@ -96,20 +97,13 @@
       </dl>
       <p>La gráfica y las muestras son datos técnicos de demostración. No se interpretan ni producen diagnósticos.</p>
       <button id="repetir-simulacion" type="button">Repetir simulación</button>
+      <p class="notice">Esta demostración no asocia la captura a un paciente, no crea episodios y no guarda resultados.</p>
+      <button id="finalizar-simulacion" type="button">Finalizar sin guardar</button>
     </section>
 
-    <section id="paso-guardar" class="step-panel" aria-labelledby="guardar-titulo" hidden>
-      <h2 id="guardar-titulo">6. Asociar a un episodio y guardar (opcional)</h2>
-      <p>Esta etapa es independiente de la preparación y simulación. No crea episodios ni dispositivos. Para persistir, la API requiere un episodio existente y un dispositivo ECG ya registrado.</p>
-      <label for="episodio-id">ID del episodio activo
-        <input id="episodio-id" type="number" min="1" step="1" inputmode="numeric">
-      </label>
-      <p>Se buscará un dispositivo existente con código <code>ECG-001</code>. No se dará de alta automáticamente.</p>
-      <button id="guardar-resultado" type="button" disabled>Confirmar y guardar simulación</button>
-      <p id="estado-guardado" role="status"></p>
-      <button id="consultar-resultados" type="button" hidden>Consultar resultados guardados</button>
-      <p id="estado-consulta" role="status"></p>
-      <ol id="resultados-guardados"></ol>
+    <section id="captura-finalizada" role="status" hidden>
+      <h2>Captura finalizada</h2>
+      <p>El flujo se cerró. No se guardó ningún resultado.</p>
     </section>
 
     <section id="error" role="alert" hidden>
