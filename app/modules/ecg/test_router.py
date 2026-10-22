@@ -1,4 +1,5 @@
 ﻿import json
+import re
 from datetime import date
 
 import pytest
@@ -203,7 +204,7 @@ def test_post_rechaza_entrada_invalida_con_422(ecg_client, ecg_references):
     ["episodio_id", "dispositivo_id"],
 )
 def test_post_referencia_inexistente_devuelve_404(
-    campo_id, ecg_client, ecg_references
+    campo_id, ecg_client, ecg_references, test_engine
 ):
     entrada = _entrada_valida(ecg_references)
     entrada[campo_id] = 999
@@ -211,6 +212,8 @@ def test_post_referencia_inexistente_devuelve_404(
     response = ecg_client.post(RUTA, json=entrada)
 
     assert response.status_code == 404
+    with Session(test_engine) as session:
+        assert session.exec(select(ResultadoModulo)).all() == []
 
 
 def test_get_resultados_del_episodio(ecg_client, ecg_references):
@@ -263,6 +266,7 @@ def test_pantalla_ecg_disponible_desde_router_principal(ecg_client):
     response = ecg_client.get("/api/v1/ecg/pantalla")
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
     assert "Recorrido educativo de captura ECG" in response.text
     assert "/api/v1/ecg/frontend.js" in response.text
 
@@ -271,8 +275,10 @@ def test_frontend_ecg_disponible_desde_router_principal(ecg_client):
     response = ecg_client.get("/api/v1/ecg/frontend.js")
 
     assert response.status_code == 200
-    assert "SIMULADOR" in response.text
-    assert "/ecg/resultados" in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert "/ecg/simulador/captura" in response.text
+    assert "/episodios" not in response.text
+    assert "/ecg/resultados" not in response.text
 
 
 def test_captura_simulada_reutiliza_esquema_ecg(ecg_client):
@@ -283,17 +289,28 @@ def test_captura_simulada_reutiliza_esquema_ecg(ecg_client):
 
 
 
-def test_pantalla_ecg_puede_recorrerse_sin_episodio_inicial(ecg_client):
-    response = ecg_client.get("/api/v1/ecg/pantalla")
+def test_pantalla_ecg_mantiene_la_secuencia_de_navegacion(ecg_client):
+    html = ecg_client.get("/api/v1/ecg/pantalla").text
+    javascript = ecg_client.get("/api/v1/ecg/frontend.js").text
 
-    assert response.status_code == 200
-    html = response.text
-    preparacion = html.split('<section id="paso-preparacion"', 1)[1].split("</section>", 1)[0]
-    assert "episodio-id" not in preparacion
-    assert html.index('id="paso-preparacion"') < html.index('id="paso-electrodos"')
-    assert html.index('id="paso-electrodos"') < html.index('id="paso-conexiones"')
-    assert html.index('id="paso-conexiones"') < html.index('id="paso-captura"')
-    assert html.index('id="paso-captura"') < html.index('id="paso-resumen"')
-    assert html.index('id="paso-resumen"') < html.index('id="paso-guardar"')
-
-
+    step_ids = ["paso-preparacion", "paso-electrodos", "paso-captura", "paso-resumen"]
+    assert [html.index(f'id="{step_id}"') for step_id in step_ids] == sorted(
+        html.index(f'id="{step_id}"') for step_id in step_ids
+    )
+    html_ids = re.findall(r'\bid="([^"]+)"', html)
+    assert len(html_ids) == len(set(html_ids))
+    selectors = re.findall(r'app\.querySelector\("#([^"]+)"\)', javascript)
+    assert set(selectors) <= set(html_ids)
+    assert html.count('id="paso-siguiente"') == 1
+    assert all(f'#{step_id}' in javascript for step_id in step_ids)
+    assert javascript.count('app.querySelector("#paso-siguiente").addEventListener("click"') == 1
+    assert "showStep(currentStep + 1)" in javascript
+    assert 'app.querySelector("#repetir-ecg").addEventListener("click", startSimulation)' in javascript
+    assert 'app.querySelector("#finalizar-ecg").addEventListener("click", finishCaptureFlow)' in javascript
+    assert 'app.querySelector("#finalizar-simulacion").addEventListener("click", finishCaptureFlow)' in javascript
+    assert 'id="paso-guardar"' not in html
+    assert 'id="paciente-seleccionado"' not in html
+    assert 'id="paso-siguiente"' in html
+    assert not any(route in javascript for route in ("/pacientes", "/episodios", "/ecg/resultados"))
+    assert "No se guardó ningún resultado." in html
+    assert 'src="/api/v1/ecg/frontend.js"' in html
