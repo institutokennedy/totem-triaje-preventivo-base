@@ -1,0 +1,129 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recorrido educativo ECG</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #182230; }
+    body { max-width: 58rem; margin: 2rem auto; padding: 0 1rem; }
+    main { border: 1px solid #cbd5e1; border-radius: .75rem; padding: 1.5rem; }
+    section { margin-top: 1.25rem; }
+    .notice { background: #fff7e6; border-left: 4px solid #d97706; padding: .8rem 1rem; }
+    .status { font-weight: 700; }
+    .steps { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0; list-style: none; }
+    .steps li { border: 1px solid #94a3b8; border-radius: 2rem; padding: .35rem .7rem; }
+    .steps li[aria-current="step"] { background: #1d4ed8; color: white; border-color: #1d4ed8; }
+    .step-panel { border-top: 1px solid #cbd5e1; padding-top: 1rem; }
+    .visual { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; }
+    .electrode { border: 1px solid #cbd5e1; border-radius: .6rem; padding: .8rem; width: 9rem; text-align: center; }
+    .pad { display: inline-grid; place-items: center; width: 3.5rem; height: 3.5rem; border: .45rem solid #475569; border-radius: 50%; background: #e2e8f0; font-weight: 700; }
+    .connection { border-left: 4px solid #64748b; padding: .6rem .8rem; margin: .5rem 0; }
+    .signal { width: 100%; max-width: 42rem; border: 1px solid #94a3b8; background: #f8fafc; }
+    button { margin: .5rem .5rem .5rem 0; padding: .65rem 1rem; cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    label { display: block; margin: .8rem 0; }
+    input { display: block; box-sizing: border-box; max-width: 22rem; width: 100%; padding: .5rem; }
+    [hidden] { display: none !important; }
+    li.sample { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <main id="ecg-app" data-step="0">
+    <h1>Recorrido educativo de captura ECG</h1>
+    <p class="notice"><strong>Modo de esta pantalla: SIMULACIÓN.</strong> No se ha comprobado ni conectado un dispositivo físico. La simulación usa muestras ficticias del simulador del proyecto.</p>
+    <p id="paso-actual" class="status" role="status">Paso 1 de 6: Preparación del paciente</p>
+    <ol class="steps" aria-label="Pasos del recorrido">
+      <li aria-current="step">Preparación</li>
+      <li>Electrodos</li>
+      <li>Conexiones</li>
+      <li>Captura</li>
+      <li>Resumen</li>
+      <li>Guardar (opcional)</li>
+    </ol>
+
+    <section id="paso-preparacion" class="step-panel" aria-labelledby="preparacion-titulo">
+      <h2 id="preparacion-titulo">1. Preparación del paciente</h2>
+      <p>Explicá el procedimiento y prepará el espacio según el protocolo aprobado por tu institución. Este recorrido educativo no solicita datos personales.</p>
+      <p>Podés continuar con la preparación y la simulación sin ingresar un episodio.</p>
+    </section>
+
+    <section id="paso-electrodos" class="step-panel" aria-labelledby="electrodos-titulo" hidden>
+      <h2 id="electrodos-titulo">2. Electrodos</h2>
+      <p>La ilustración identifica los tres elementos del ejemplo. Es una referencia de componentes, no indica dónde colocarlos sobre el cuerpo.</p>
+      <div class="visual" aria-label="Representación de tres electrodos, sin ubicación anatómica">
+        <div class="electrode"><span class="pad" aria-hidden="true">1</span><p>Electrodo 1</p></div>
+        <div class="electrode"><span class="pad" aria-hidden="true">2</span><p>Electrodo 2</p></div>
+        <div class="electrode"><span class="pad" aria-hidden="true">3</span><p>Electrodo 3</p></div>
+      </div>
+      <p class="notice">El proyecto no incluye ubicaciones anatómicas aprobadas. Antes de una adquisición física, consultá la guía validada del equipo o el protocolo de tu institución; esta pantalla no sustituye esas instrucciones.</p>
+    </section>
+
+    <section id="paso-conexiones" class="step-panel" aria-labelledby="conexiones-titulo" hidden>
+      <h2 id="conexiones-titulo">3. Conexiones y estado del dispositivo</h2>
+      <p id="estado-dispositivo" class="status">Dispositivo físico: NO VERIFICADO por esta aplicación.</p>
+      <div class="connection">Electrodos y cables: la aplicación no recibe telemetría para comprobarlos. En una instalación física, verificá visualmente las conexiones según la guía aprobada del equipo.</div>
+      <div class="connection">Simulador Python: disponible a través de la aplicación. Esta es la única fuente de datos habilitada en este recorrido.</div>
+      <p>En el siguiente paso podés iniciar una simulación; no se leerá ningún sensor.</p>
+    </section>
+
+    <section id="paso-captura" class="step-panel" aria-labelledby="captura-titulo" hidden>
+      <h2 id="captura-titulo">4. Captura ECG simulada</h2>
+      <p>Iniciá la simulación para recibir el lote ficticio y ver sus muestras progresivamente. Podés detener la presentación en cualquier momento.</p>
+      <p id="estado-simulacion" role="status">Simulación todavía no iniciada.</p>
+      <button id="iniciar-simulacion" type="button">Iniciar simulación</button>
+      <button id="detener-simulacion" type="button" hidden>Detener simulación</button>
+      <dl>
+        <dt>Muestras presentadas</dt><dd id="cantidad-en-curso">0</dd>
+      </dl>
+      <svg id="grafico-senal" class="signal" viewBox="0 0 640 180" role="img" aria-labelledby="grafico-titulo grafico-descripcion">
+        <title id="grafico-titulo">Señal ECG simulada</title>
+        <desc id="grafico-descripcion">La gráfica presenta las muestras ficticias recibidas, sin interpretación clínica.</desc>
+        <path d="M 24 90 H 616" stroke="#cbd5e1" stroke-width="1" fill="none"></path>
+        <polyline id="trazo-senal" points="" fill="none" stroke="#1d4ed8" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"></polyline>
+      </svg>
+      <ol id="muestras-vistas" aria-label="Muestras simuladas"></ol>
+    </section>
+
+    <section id="paso-resumen" class="step-panel" aria-labelledby="resumen-titulo" hidden>
+      <h2 id="resumen-titulo">5. Resumen de captura</h2>
+      <p class="notice"><strong>Origen: SIMULACIÓN.</strong> Las muestras son ficticias. No se adquirieron señales de un dispositivo físico.</p>
+      <dl>
+        <dt>Cantidad de muestras</dt><dd id="cantidad-final">—</dd>
+        <dt>Frecuencia indicada por el simulador</dt><dd id="frecuencia-final">—</dd>
+        <dt>Unidad</dt><dd id="unidad-final">—</dd>
+        <dt>Adquisición física</dt><dd>No disponible ni verificada en esta integración.</dd>
+      </dl>
+      <p>La gráfica y las muestras son datos técnicos de demostración. No se interpretan ni producen diagnósticos.</p>
+      <button id="repetir-simulacion" type="button">Repetir simulación</button>
+    </section>
+
+    <section id="paso-guardar" class="step-panel" aria-labelledby="guardar-titulo" hidden>
+      <h2 id="guardar-titulo">6. Asociar a un episodio y guardar (opcional)</h2>
+      <p>Esta etapa es independiente de la preparación y simulación. No crea episodios ni dispositivos. Para persistir, la API requiere un episodio existente y un dispositivo ECG ya registrado.</p>
+      <label for="episodio-id">ID del episodio activo
+        <input id="episodio-id" type="number" min="1" step="1" inputmode="numeric">
+      </label>
+      <p>Se buscará un dispositivo existente con código <code>ECG-001</code>. No se dará de alta automáticamente.</p>
+      <button id="guardar-resultado" type="button" disabled>Confirmar y guardar simulación</button>
+      <p id="estado-guardado" role="status"></p>
+      <button id="consultar-resultados" type="button" hidden>Consultar resultados guardados</button>
+      <p id="estado-consulta" role="status"></p>
+      <ol id="resultados-guardados"></ol>
+    </section>
+
+    <section id="error" role="alert" hidden>
+      <h2>No se pudo completar la acción</h2>
+      <p id="mensaje-error"></p>
+    </section>
+
+    <nav aria-label="Navegación del recorrido">
+      <button id="paso-anterior" type="button" disabled>Atrás</button>
+      <button id="paso-siguiente" type="button">Continuar</button>
+    </nav>
+  </main>
+  <script src="/api/v1/ecg/frontend.js" defer></script>
+</body>
+</html>
+
+
