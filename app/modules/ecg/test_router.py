@@ -18,6 +18,8 @@ from app.core.database import get_session
 from app.modules.ecg.router import router as ecg_router
 from app.modules.ecg.schemas import DatosECG, EntradaECG, RespuestaConsulta
 from app.modules.ecg.simulator import generar_datos_ecg
+from app.modules.dispositivos.router import router as dispositivos_router
+from app.modules.episodios.router import router as episodios_router
 
 
 RUTA = "/api/v1/ecg/resultados"
@@ -28,6 +30,8 @@ def ecg_app(test_engine):
     SQLModel.metadata.create_all(test_engine)
     application = FastAPI()
     application.include_router(ecg_router)
+    application.include_router(episodios_router)
+    application.include_router(dispositivos_router)
 
     def override_get_session():
         with Session(test_engine) as session:
@@ -62,7 +66,7 @@ def ecg_references(test_engine, ecg_app):
             tipo_circuito="COMPLETO",
         )
         dispositivo = Dispositivo(
-            codigo="ECG-TEST-001",
+            codigo="ECG-001",
             nombre="Simulador ECG ficticio",
             tipo="ECG",
         )
@@ -277,8 +281,9 @@ def test_frontend_ecg_disponible_desde_router_principal(ecg_client):
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert "/ecg/simulador/captura" in response.text
-    assert "/episodios" not in response.text
-    assert "/ecg/resultados" not in response.text
+    assert "/pacientes" not in response.text
+    assert "/episodios/" in response.text and "/dispositivos" in response.text
+    assert "/ecg/resultados" in response.text
 
 
 def test_captura_simulada_reutiliza_esquema_ecg(ecg_client):
@@ -307,10 +312,63 @@ def test_pantalla_ecg_mantiene_la_secuencia_de_navegacion(ecg_client):
     assert "showStep(currentStep + 1)" in javascript
     assert 'app.querySelector("#repetir-ecg").addEventListener("click", startSimulation)' in javascript
     assert 'app.querySelector("#finalizar-ecg").addEventListener("click", finishCaptureFlow)' in javascript
-    assert 'app.querySelector("#finalizar-simulacion").addEventListener("click", finishCaptureFlow)' in javascript
     assert 'id="paso-guardar"' not in html
     assert 'id="paciente-seleccionado"' not in html
+    assert 'id="episodio-existente"' not in html
+    assert 'id="dispositivo-ecg"' not in html
+    assert html.count('id="guardar-captura"') == 1
+    assert "Guardar en la base de datos" in html
+    assert "<select" not in html
+    assert "episodio_id" not in html
+    assert "dispositivo_id" not in html
     assert 'id="paso-siguiente"' in html
-    assert not any(route in javascript for route in ("/pacientes", "/episodios", "/ecg/resultados"))
-    assert "No se guardó ningún resultado." in html
+    assert "/pacientes" not in javascript
+    assert 'new URLSearchParams(window.location.search).get("episodio_id")' in javascript
+    assert 'episodeId === null || !Number.isSafeInteger(episodeId)' in javascript
+    assert "No se recibió un episodio activo válido" in javascript
+    assert 'requestJson(`${API}/episodios/${episodeId}`' in javascript
+    assert 'requestJson(`${API}/dispositivos`' in javascript
+    assert 'device.codigo === "ECG-001"' in javascript
+    assert 'device.tipo === "ECG"' in javascript
+    assert "device.activo === true" in javascript
+    assert "No se encontró un dispositivo ECG-001 activo" in javascript
+    assert "/ecg/resultados" in javascript
+    simulation = javascript.split("async function startSimulation()", 1)[1].split(
+        "function finishCaptureFlow()", 1
+    )[0]
+    assert "/ecg/simulador/captura" in simulation
+    assert "/ecg/resultados" not in simulation
+    confirmation = javascript.split("async function confirmCapture()", 1)[1].split(
+        "function reportError", 1
+    )[0]
+    assert 'method: "POST"' in confirmation
+    assert 'origen: "SIMULADOR"' in confirmation
+    assert "episodio_id: episodeId" in confirmation
+    assert "dispositivo_id: deviceId" in confirmation
+    assert "data: capture" in confirmation
+    assert 'app.querySelector("#guardar-captura").addEventListener("click", confirmCapture)' in javascript
+    assert 'app.querySelector("#repetir-simulacion")' not in javascript
+    assert "markCaptureSaved(saved.resultado_id)" in confirmation
+    assert "no se confirmó ningún guardado" in confirmation
+    assert "if (!response.ok)" in javascript
+    assert "Guardar en la base de datos" in javascript
+    assert 'id="estado-finalizacion"' in html
+    assert "savedRevision === captureRevision" in javascript
     assert 'src="/api/v1/ecg/frontend.js"' in html
+
+
+def test_apis_devuelven_contexto_real_para_el_frontend(ecg_client, ecg_references):
+    episodio = ecg_client.get(
+        f"/api/v1/episodios/{ecg_references['episodio_id']}"
+    )
+    dispositivos = ecg_client.get("/api/v1/dispositivos")
+
+    assert episodio.status_code == 200
+    assert episodio.json()["id"] == ecg_references["episodio_id"]
+    assert dispositivos.status_code == 200
+    dispositivo = next(
+        item for item in dispositivos.json() if item["codigo"] == "ECG-001"
+    )
+    assert dispositivo["id"] == ecg_references["dispositivo_id"]
+    assert dispositivo["tipo"] == "ECG"
+    assert dispositivo["activo"] is True

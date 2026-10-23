@@ -26,7 +26,6 @@
     button { margin: .5rem .5rem .5rem 0; padding: .65rem 1rem; cursor: pointer; }
     button:disabled { cursor: not-allowed; opacity: .55; }
     label { display: block; margin: .8rem 0; }
-    select { display: block; box-sizing: border-box; max-width: 28rem; width: 100%; padding: .5rem; }
     [hidden] { display: none !important; }
     li.sample { font-variant-numeric: tabular-nums; }
   </style>
@@ -96,14 +95,17 @@
         <dt>Adquisición física</dt><dd>No disponible ni verificada en esta integración.</dd>
       </dl>
       <p>La gráfica y las muestras son datos técnicos de demostración. No se interpretan ni producen diagnósticos.</p>
-      <button id="repetir-simulacion" type="button">Repetir simulación</button>
-      <p class="notice">Esta demostración no asocia la captura a un paciente, no crea episodios y no guarda resultados.</p>
-      <button id="finalizar-simulacion" type="button">Finalizar sin guardar</button>
+      <fieldset id="confirmacion-persistencia">
+        <legend>Guardar captura</legend>
+        <p id="estado-persistencia" role="status">Se verificará el episodio activo recibido por el tótem y el dispositivo ECG registrado.</p>
+        <p id="estado-guardado" role="status"></p>
+        <button id="guardar-captura" type="button" disabled>Guardar en la base de datos</button>
+      </fieldset>
     </section>
 
     <section id="captura-finalizada" role="status" hidden>
       <h2>Captura finalizada</h2>
-      <p>El flujo se cerró. No se guardó ningún resultado.</p>
+      <p id="estado-finalizacion">El estado de la captura se mostrará aquí.</p>
     </section>
 
     <section id="error" role="alert" hidden>
