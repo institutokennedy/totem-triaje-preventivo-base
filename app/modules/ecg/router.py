@@ -47,6 +47,36 @@ def frontend_ecg() -> FileResponse:
     )
 
 
+@router.get("/circuito/pantalla", include_in_schema=False)
+def pagina_circuito() -> FileResponse:
+    """Sirve la pantalla transversal de selección de circuito del Grupo 2."""
+    return FileResponse(
+        APP_DIR / "templates" / "modulos" / "circuito.html",
+        media_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/circuito/prueba", include_in_schema=False)
+def pagina_prueba_circuito() -> FileResponse:
+    """Sirve una herramienta temporal aislada para probar HU-03 y ECG."""
+    return FileResponse(
+        APP_DIR / "templates" / "modulos" / "circuito_prueba.html",
+        media_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/circuito/frontend.js", include_in_schema=False)
+def frontend_circuito() -> FileResponse:
+    """Sirve el JavaScript de selección de circuito."""
+    return FileResponse(
+        APP_DIR / "static" / "js" / "circuito.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/simulador/captura")
 def captura_simulada() -> dict[str, int | list[float] | str]:
     """Entrega las muestras técnicas ficticias del simulador ECG."""

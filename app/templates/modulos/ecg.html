@@ -35,6 +35,15 @@
   <main id="ecg-app" data-step="0">
     <h1>Recorrido educativo de captura ECG</h1>
     <p class="notice"><strong>Modo de esta pantalla: SIMULACIÓN.</strong> No se ha comprobado ni conectado un dispositivo físico. La simulación usa muestras ficticias del simulador del proyecto.</p>
+    <section class="notice" aria-labelledby="contexto-integracion-titulo">
+      <h2 id="contexto-integracion-titulo">Contexto del episodio pendiente</h2>
+      <p id="episodio-contexto">No se recibió un episodio activo ni el contexto del circuito. La captura de esta página sigue siendo una demostración técnica y no se guarda.</p>
+      <ul>
+        <li><strong>HU-09 · Guardia:</strong> no se recibió una clasificación roja válida; esta pantalla no declara que el flujo HU-09 esté habilitado.</li>
+        <li><strong>HU-14 · Completo:</strong> no se recibió un episodio del circuito completo. Este flujo no requiere clasificación roja.</li>
+      </ul>
+      <p>La integración requiere que los responsables acuerden cómo entregar el episodio y, para HU-09, la clasificación. No se usa un ID provisional ni se inventa un mecanismo de transferencia.</p>
+    </section>
     <p id="paso-actual" class="status" role="status">Paso 1 de 4: Limpieza de la piel</p>
     <ol class="steps" aria-label="Pasos del recorrido">
       <li aria-current="step">Limpieza</li>
@@ -97,7 +106,16 @@
       </dl>
       <p>La gráfica y las muestras son datos técnicos de demostración. No se interpretan ni producen diagnósticos.</p>
       <button id="repetir-simulacion" type="button">Repetir simulación</button>
-      <p class="notice">Esta demostración no asocia la captura a un paciente, no crea episodios y no guarda resultados.</p>
+      <section id="persistencia-panel" class="notice" aria-labelledby="persistencia-titulo">
+        <h3 id="persistencia-titulo">Persistencia técnica de la simulación</h3>
+        <p id="episodio-persistencia">Sin episodio validado. Abrí esta pantalla desde un episodio real para habilitar el guardado.</p>
+        <p id="dispositivo-persistencia">El dispositivo ECG se verificará al validar el episodio.</p>
+        <button id="guardar-resultado" type="button" disabled>Guardar captura simulada</button>
+        <button id="verificar-resultado" type="button" hidden>Consultar estado del guardado</button>
+        <p id="estado-guardado" role="status" aria-live="polite"></p>
+        <ul id="resultados-guardados" hidden></ul>
+      </section>
+      <p id="sin-contexto-persistencia" class="notice">La señal simulada puede generarse sin paciente; persistirla requiere un episodio existente y un dispositivo ECG real del catálogo.</p>
       <button id="finalizar-simulacion" type="button">Finalizar sin guardar</button>
     </section>
 

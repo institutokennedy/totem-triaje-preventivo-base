@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Selección de circuito y episodio</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #182230; }
+    body { max-width: 58rem; margin: 2rem auto; padding: 0 1rem; }
+    main { border: 1px solid #cbd5e1; border-radius: .75rem; padding: 1.5rem; }
+    fieldset { border: 1px solid #94a3b8; border-radius: .5rem; margin: 1rem 0; padding: 1rem; }
+    label { display: block; margin: .75rem 0; }
+    button { padding: .65rem 1rem; cursor: pointer; }
+    .notice { background: #fff7e6; border-left: 4px solid #d97706; padding: .8rem 1rem; }
+    [hidden] { display: none !important; }
+    dd { margin: 0 0 .6rem 0; }
+  </style>
+</head>
+<body>
+  <main id="circuito-app">
+    <h1>Selección del circuito</h1>
+    <p class="notice"><strong>Contexto de paciente pendiente.</strong> Esta pantalla no recibe actualmente un paciente identificado. El proyecto no define un mecanismo para compartirlo entre pantallas. No ingreses un ID aquí; la creación del episodio requiere integrar el flujo de identificación.</p>
+    <fieldset>
+      <legend>Circuito</legend>
+      <label><input type="radio" name="tipo_circuito" value="GUARDIA"> GUARDIA</label>
+      <label><input type="radio" name="tipo_circuito" value="COMPLETO"> COMPLETO</label>
+    </fieldset>
+    <button id="crear-episodio" type="button" disabled>Crear episodio</button>
+    <p id="mensaje" class="notice" role="status">Seleccioná un circuito. La creación espera el paciente real del flujo de identificación.</p>
+    <section id="episodio-activo" aria-labelledby="episodio-titulo" hidden>
+      <h2 id="episodio-titulo">Episodio activo</h2>
+      <dl>
+        <dt>ID</dt><dd id="episodio-id"></dd>
+        <dt>Paciente</dt><dd id="paciente-id"></dd>
+        <dt>Circuito</dt><dd id="episodio-circuito"></dd>
+        <dt>Inicio</dt><dd id="episodio-inicio"></dd>
+        <dt>Estado</dt><dd id="episodio-estado"></dd>
+      </dl>
+    </section>
+    <a id="abrir-ecg" href="#" hidden>Abrir ECG para este episodio de prueba</a>
+    <p>El enlace utiliza el ID devuelto por la API solo durante este recorrido de prueba. La navegación permanente del episodio sigue pendiente de integración.</p>
+    <p><a href="/api/v1/ecg/circuito/prueba">Abrir herramienta temporal de prueba para desarrolladores</a></p>
+  </main>
+  <script src="/api/v1/ecg/circuito/frontend.js" defer></script>
+</body>
+</html>

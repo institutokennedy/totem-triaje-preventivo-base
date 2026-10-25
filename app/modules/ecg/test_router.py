@@ -271,14 +271,323 @@ def test_pantalla_ecg_disponible_desde_router_principal(ecg_client):
     assert "/api/v1/ecg/frontend.js" in response.text
 
 
-def test_frontend_ecg_disponible_desde_router_principal(ecg_client):
+def test_pantalla_ecg_delimita_contextos_hu09_y_hu14(ecg_client):
+    html = ecg_client.get("/api/v1/ecg/pantalla").text
+
+    assert "no se recibió una clasificación roja válida" in html
+    assert "no se recibió un episodio del circuito completo" in html
+    assert "esta pantalla no declara que el flujo HU-09 esté habilitado" in html
+
+
+def test_pantalla_transversal_no_solicita_paciente_sin_contexto(ecg_client):
+    html_response = ecg_client.get("/api/v1/ecg/circuito/pantalla")
+    js_response = ecg_client.get("/api/v1/ecg/circuito/frontend.js")
+
+    assert html_response.status_code == 200
+    assert js_response.status_code == 200
+    assert html_response.headers["cache-control"] == "no-store"
+    assert 'name="tipo_circuito" value="GUARDIA"' in html_response.text
+    assert 'name="tipo_circuito" value="COMPLETO"' in html_response.text
+    assert 'id="paciente-id-entrada"' not in html_response.text
+    assert 'id="crear-episodio" type="button" disabled' in html_response.text
+    assert "no define un mecanismo para compartirlo entre pantallas" in html_response.text
+    assert "No se selecciona ningún paciente automáticamente." in js_response.text
+    assert 'radio.addEventListener("change"' in js_response.text
+    html_ids = re.findall(r'\bid="([^"]+)"', html_response.text)
+    selectors = re.findall(r'app\.querySelector\("#([^\"]+)"\)', js_response.text)
+    assert len(html_ids) == len(set(html_ids))
+    assert set(selectors) <= set(html_ids)
+
+
+def test_pantalla_temporal_prueba_hu03_y_ecg(client):
+    page = client.get("/api/v1/ecg/circuito/prueba")
+    script = client.get("/api/v1/ecg/circuito/frontend.js")
+
+    assert page.status_code == 200
+    assert "text/html" in page.headers["content-type"]
+    assert page.headers["cache-control"] == "no-store"
+    assert "Herramienta temporal de prueba" in page.text
+    assert 'data-mode="prueba"' in page.text
+    assert 'src="/api/v1/ecg/circuito/frontend.js"' in page.text
+    assert 'value="">Cargando pacientes…' in page.text
+    assert 'name="tipo_circuito" value="GUARDIA"' in page.text
+    assert 'name="tipo_circuito" value="COMPLETO"' in page.text
+    assert script.status_code == 200
+    assert 'API + "/pacientes"' in script.text
+    assert 'new Option("Seleccioná un paciente existente…", "")' in script.text
+    assert 'API + "/episodios"' in script.text
+    assert 'API + "/episodios/" + created.id' in script.text
+    assert "checked.paciente_id !== patient.id" in script.text
+    assert 'root.querySelector("#seccion-ecg-prueba").hidden = false' in script.text
+    assert 'API + "/dispositivos"' in script.text
+    assert 'API + "/ecg/simulador/captura"' in script.text
+    assert 'API + "/ecg/resultados"' in script.text
+    assert 'API + "/ecg/resultados/" + episode.id' in script.text
+    assert "localStorage" not in script.text
+    assert "sessionStorage" not in script.text
+    assert "URLSearchParams" not in script.text
+
+
+def test_api_pacientes_devuelve_registros_reales_para_modo_prueba(client):
+    created = client.post(
+        "/api/v1/pacientes",
+        json={
+            "dni": "30987654",
+            "nombre": "Paciente",
+            "apellido": "Prueba temporal",
+            "fecha_nacimiento": "1990-04-12",
+        },
+    )
+    assert created.status_code == 201
+
+    response = client.get("/api/v1/pacientes")
+
+    assert response.status_code == 200
+    patient = next(item for item in response.json() if item["id"] == created.json()["id"])
+    assert patient["nombre"] == "Paciente"
+    assert patient["apellido"] == "Prueba temporal"
+    assert patient["dni"] == "30987654"
+
+
+def test_pantallas_y_javascript_ecg_accesibles_desde_app_principal(client):
+    pantalla_ecg = client.get("/api/v1/ecg/pantalla")
+    pantalla_circuito = client.get("/api/v1/ecg/circuito/pantalla")
+    javascript_ecg = client.get("/api/v1/ecg/frontend.js")
+    javascript_circuito = client.get("/api/v1/ecg/circuito/frontend.js")
+
+    assert pantalla_ecg.status_code == 200
+    assert "text/html" in pantalla_ecg.headers["content-type"]
+    assert 'src="/api/v1/ecg/frontend.js"' in pantalla_ecg.text
+    assert pantalla_circuito.status_code == 200
+    assert "text/html" in pantalla_circuito.headers["content-type"]
+    assert 'src="/api/v1/ecg/circuito/frontend.js"' in pantalla_circuito.text
+    assert javascript_ecg.status_code == 200
+    assert "javascript" in javascript_ecg.headers["content-type"]
+    assert javascript_circuito.status_code == 200
+    assert "javascript" in javascript_circuito.headers["content-type"]
+
+
+@pytest.mark.parametrize("tipo_circuito", ["GUARDIA", "COMPLETO"])
+def test_app_principal_crea_episodio_con_circuito_admitido(
+    client, test_engine, tipo_circuito
+):
+    with Session(test_engine) as session:
+        paciente = Paciente(
+            dni="12345678",
+            nombre="Paciente",
+            apellido="Prueba",
+            fecha_nacimiento=date(2000, 1, 1),
+        )
+        session.add(paciente)
+        session.commit()
+        session.refresh(paciente)
+        paciente_id = paciente.id
+
+    response = client.post(
+        "/api/v1/episodios",
+        json={"paciente_id": paciente_id, "tipo_circuito": tipo_circuito},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["tipo_circuito"] == tipo_circuito
+    assert response.json()["paciente_id"] == paciente_id
+
+
+@pytest.mark.parametrize(
+    "tipo_circuito",
+    ["", "DESCONOCIDO", "TRIAJE_PREVENTIVO"],
+)
+def test_app_principal_rechaza_circuito_no_admitido_sin_crear_episodio(
+    client, test_engine, tipo_circuito
+):
+    response = client.post(
+        "/api/v1/episodios",
+        json={"paciente_id": 1, "tipo_circuito": tipo_circuito},
+    )
+
+    assert response.status_code == 422
+    with Session(test_engine) as session:
+        assert session.exec(select(EpisodioAtencion)).all() == []
+
+
+def test_app_principal_rechaza_paciente_inexistente(client, test_engine):
+    response = client.post(
+        "/api/v1/episodios",
+        json={"paciente_id": 999999, "tipo_circuito": "COMPLETO"},
+    )
+
+    assert response.status_code == 404
+    with Session(test_engine) as session:
+        assert session.exec(select(EpisodioAtencion)).all() == []
+
+
+@pytest.mark.parametrize("tipo_circuito", ["GUARDIA", "COMPLETO"])
+def test_app_principal_persiste_y_consulta_ecg_simulado(
+    client, test_engine, tipo_circuito
+):
+    patient_created = client.post(
+        "/api/v1/pacientes",
+        json={
+            "dni": "87654321",
+            "nombre": "Paciente",
+            "apellido": "Prueba ECG",
+            "fecha_nacimiento": "2000-01-01",
+        },
+    )
+    assert patient_created.status_code == 201
+    patient_list = client.get("/api/v1/pacientes")
+    assert patient_list.status_code == 200
+    paciente_id = patient_created.json()["id"]
+    patient = next(item for item in patient_list.json() if item["id"] == paciente_id)
+    assert patient["dni"] == "87654321"
+
+    episodio_response = client.post(
+        "/api/v1/episodios",
+        json={"paciente_id": paciente_id, "tipo_circuito": tipo_circuito},
+    )
+    assert episodio_response.status_code == 201
+    episodio_id = episodio_response.json()["id"]
+    episode_check = client.get(f"/api/v1/episodios/{episodio_id}")
+    assert episode_check.status_code == 200
+    assert episode_check.json()["paciente_id"] == paciente_id
+    assert episode_check.json()["tipo_circuito"] == tipo_circuito
+
+    dispositivo_response = client.post(
+        "/api/v1/dispositivos",
+        json={"codigo": "ECG-001", "nombre": "ECG de prueba", "tipo": "ECG"},
+    )
+    assert dispositivo_response.status_code == 201
+    dispositivos = client.get("/api/v1/dispositivos")
+    assert dispositivos.status_code == 200
+    dispositivo = next(item for item in dispositivos.json() if item["codigo"] == "ECG-001")
+    assert dispositivo["tipo"] == "ECG"
+    assert dispositivo["activo"] is True
+    assert dispositivo["estado"] == "DISPONIBLE"
+
+    captura = client.get("/api/v1/ecg/simulador/captura").json()
+    entrada = {
+        "episodio_id": episodio_id,
+        "dispositivo_id": dispositivo["id"],
+        "origen": "SIMULADOR",
+        "data": captura,
+    }
+    guardado = client.post("/api/v1/ecg/resultados", json=entrada)
+
+    assert guardado.status_code == 201
+    resultado_id = guardado.json()["resultado_id"]
+    consulta = client.get(f"/api/v1/ecg/resultados/{episodio_id}")
+    assert consulta.status_code == 200
+    resultado = next(
+        item for item in consulta.json()["resultados"] if item["id"] == resultado_id
+    )
+    assert consulta.json()["episodio_id"] == episodio_id
+    assert resultado["data"] == captura
+
+    with Session(test_engine) as session:
+        persistido = session.exec(select(ResultadoModulo)).one()
+    assert persistido.modulo == "ecg"
+    assert persistido.episodio_id == episodio_id
+    assert persistido.dispositivo_id == dispositivo["id"]
+    assert json.loads(persistido.data_json) == captura
+
+
+@pytest.mark.parametrize("campo_id", ["episodio_id", "dispositivo_id"])
+def test_app_principal_no_persiste_resultado_con_referencia_inexistente(
+    client, test_engine, campo_id
+):
+    with Session(test_engine) as session:
+        paciente = Paciente(
+            dni="11223344",
+            nombre="Paciente",
+            apellido="Prueba error",
+            fecha_nacimiento=date(2000, 1, 1),
+        )
+        session.add(paciente)
+        session.commit()
+        session.refresh(paciente)
+        paciente_id = paciente.id
+
+    episodio = client.post(
+        "/api/v1/episodios",
+        json={"paciente_id": paciente_id, "tipo_circuito": "COMPLETO"},
+    ).json()
+    dispositivo = client.post(
+        "/api/v1/dispositivos",
+        json={"codigo": "ECG-001", "nombre": "ECG de prueba", "tipo": "ECG"},
+    ).json()
+    entrada = {
+        "episodio_id": episodio["id"],
+        "dispositivo_id": dispositivo["id"],
+        "origen": "SIMULADOR",
+        "data": generar_datos_ecg(),
+    }
+    entrada[campo_id] = 999999
+
+    response = client.post("/api/v1/ecg/resultados", json=entrada)
+
+    assert response.status_code == 404
+    with Session(test_engine) as session:
+        assert session.exec(select(ResultadoModulo)).all() == []
+
+
+def test_frontend_ecg_prepara_persistencia_con_contexto_real(ecg_client):
+    html = ecg_client.get("/api/v1/ecg/pantalla").text
     response = ecg_client.get("/api/v1/ecg/frontend.js")
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert "/ecg/simulador/captura" in response.text
-    assert "/episodios" not in response.text
-    assert "/ecg/resultados" not in response.text
+    assert "new URLSearchParams(window.location.search)" in response.text
+    assert "${API}/episodios/${episodioId}" in response.text
+    assert "${API}/dispositivos" in response.text
+    assert 'device.codigo === "ECG-001"' in response.text
+    assert 'device.tipo === "ECG"' in response.text
+    assert "device.activo === true" in response.text
+    assert 'origen: "SIMULADOR"' in response.text
+    assert 'method: "POST"' in response.text
+    assert "${API}/ecg/resultados/${episodioActivo.id}" in response.text
+    assert '<section id="persistencia-panel"' in html
+    assert '<button id="guardar-resultado" type="button" disabled>' in html
+    assert 'saveButton.hidden = false' in response.text
+    assert 'saveButton.disabled = !(hasEpisode && dispositivoEcg && capture' in response.text
+    assert "no se declara completado el flujo rojo HU-09" in response.text
+    assert "Prueba técnica HU-14" in response.text
+    assert "localStorage" not in response.text
+    assert "sessionStorage" not in response.text
+
+
+def test_frontend_ecg_reconcilia_error_antes_de_habilitar_reintento(ecg_client):
+    javascript = ecg_client.get("/api/v1/ecg/frontend.js").text
+
+    assert "async function reconcileUnconfirmedSave(error)" in javascript
+    assert "await obtenerResultadosPersistidos()" in javascript
+    assert "const match = results.find((result) => sameCapture(result.data, capture))" in javascript
+    assert "canSubmitCapture = false" in javascript
+    assert "canSubmitCapture = true" in javascript
+    assert "if (!episodioActivo || !dispositivoEcg || !capture || isSaving || saveConfirmed || !canSubmitCapture) return" in javascript
+
+
+def test_herramienta_temporal_muestra_estado_y_requisitos_del_guardado(ecg_client):
+    html = ecg_client.get("/api/v1/ecg/circuito/prueba").text
+    javascript = ecg_client.get("/api/v1/ecg/circuito/frontend.js").text
+
+    assert '<button id="guardar-ecg-prueba" type="button" hidden disabled>' in html
+    assert 'id="disponibilidad-guardado-prueba"' in html
+    assert 'saveButton.addEventListener("click", saveCapture)' in javascript
+    assert 'item.tipo === "ECG"' in javascript
+    assert 'item.estado === "DISPONIBLE"' in javascript
+    assert 'item.activo === true' in javascript
+    assert 'Number.isSafeInteger(item.id) && item.id > 0' in javascript
+    assert 'item.codigo === "ECG-001"' not in javascript
+    assert 'dispositivo_id: device.id' in javascript
+    assert "No se encontró un dispositivo ECG activo y disponible" in javascript
+    assert "falta un episodio verificado" in javascript
+    assert "falta un dispositivo ECG activo y disponible" in javascript
+    assert "falta generar la señal simulada" in javascript
+    assert "Consultando resultados existentes antes de enviar la captura" in javascript
+    assert 'API + "/ecg/resultados"' in javascript
+    assert 'API + "/ecg/resultados/" + episode.id' in javascript
+    assert "Guardado confirmado y verificado por la API" in javascript
 
 
 def test_captura_simulada_reutiliza_esquema_ecg(ecg_client):
@@ -311,6 +620,9 @@ def test_pantalla_ecg_mantiene_la_secuencia_de_navegacion(ecg_client):
     assert 'id="paso-guardar"' not in html
     assert 'id="paciente-seleccionado"' not in html
     assert 'id="paso-siguiente"' in html
-    assert not any(route in javascript for route in ("/pacientes", "/episodios", "/ecg/resultados"))
+    assert "${API}/ecg/resultados" in javascript
+    assert "origen: \"SIMULADOR\"" in javascript
+    assert "localStorage" not in javascript
+    assert "sessionStorage" not in javascript
     assert "No se guardó ningún resultado." in html
     assert 'src="/api/v1/ecg/frontend.js"' in html

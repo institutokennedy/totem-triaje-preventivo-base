@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prueba temporal HU-03 y ECG</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #182230; }
+    body { max-width: 58rem; margin: 2rem auto; padding: 0 1rem; }
+    main { border: 1px solid #cbd5e1; border-radius: .75rem; padding: 1.5rem; }
+    section { border-top: 1px solid #cbd5e1; margin-top: 1rem; padding-top: 1rem; }
+    .notice { background: #fff7e6; border-left: 4px solid #d97706; padding: .8rem 1rem; }
+    .error { background: #fff1f2; border-left-color: #be123c; }
+    [hidden] { display: none !important; }
+    label { display: block; margin: .7rem 0; }
+    select, button { box-sizing: border-box; max-width: 36rem; padding: .6rem .8rem; }
+    select { width: 100%; }
+    button { margin: .5rem .5rem .5rem 0; cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    .signal { width: 100%; max-width: 42rem; border: 1px solid #94a3b8; background: #f8fafc; }
+    [role="alert"] { color: #9f1239; }
+  </style>
+</head>
+<body>
+  <main id="circuito-prueba-app" data-mode="prueba">
+    <h1>Herramienta temporal de prueba: HU-03 y ECG</h1>
+    <p class="notice"><strong>Modo de prueba para desarrolladores.</strong> Esta pantalla usa pacientes reales devueltos por la API y muestras ficticias del simulador. No pertenece al flujo definitivo ni guarda datos clínicos.</p>
+
+    <section aria-labelledby="paciente-titulo">
+      <h2 id="paciente-titulo">1. Elegir un paciente existente</h2>
+      <label for="paciente-prueba">Paciente de la API</label>
+      <select id="paciente-prueba" disabled>
+        <option value="">Cargando pacientes…</option>
+      </select>
+      <p id="estado-pacientes" role="status">Consultando GET /api/v1/pacientes…</p>
+    </section>
+
+    <section aria-labelledby="circuito-titulo">
+      <h2 id="circuito-titulo">2. Crear episodio de prueba</h2>
+      <fieldset>
+        <legend>Tipo de circuito</legend>
+        <label><input type="radio" name="tipo_circuito" value="GUARDIA"> GUARDIA</label>
+        <label><input type="radio" name="tipo_circuito" value="COMPLETO"> COMPLETO</label>
+      </fieldset>
+      <button id="crear-episodio-prueba" type="button" disabled>Crear episodio de prueba</button>
+      <p id="estado-episodio" role="status"></p>
+      <dl id="resumen-episodio" hidden>
+        <dt>Paciente</dt><dd id="episodio-paciente"></dd>
+        <dt>Episodio devuelto por la API</dt><dd id="episodio-id-prueba"></dd>
+        <dt>Circuito</dt><dd id="episodio-circuito-prueba"></dd>
+        <dt>Estado</dt><dd id="episodio-estado-prueba"></dd>
+      </dl>
+    </section>
+
+    <section id="seccion-ecg-prueba" aria-labelledby="ecg-titulo" hidden>
+      <h2 id="ecg-titulo">3. ECG simulado</h2>
+      <p class="notice"><strong>SIMULACIÓN TÉCNICA.</strong> No hay adquisición física, clasificación roja ni interpretación clínica. GUARDIA no equivale a completar HU-09; COMPLETO permite comprobar el recorrido técnico asociado a HU-14.</p>
+      <p id="estado-dispositivo" role="status">Verificando dispositivo ECG…</p>
+      <button id="generar-ecg-prueba" type="button">Generar señal simulada</button>
+      <dl id="resumen-captura" hidden>
+        <dt>Cantidad de muestras</dt><dd id="cantidad-muestras"></dd>
+        <dt>Frecuencia</dt><dd id="frecuencia-muestras"></dd>
+        <dt>Unidad</dt><dd id="unidad-muestras"></dd>
+      </dl>
+      <svg id="grafico-prueba" class="signal" viewBox="0 0 640 180" role="img" aria-label="Señal ECG simulada">
+        <polyline id="trazo-prueba" points="" fill="none" stroke="#1d4ed8" stroke-width="3"></polyline>
+      </svg>
+      <button id="guardar-ecg-prueba" type="button" hidden disabled>Guardar captura simulada</button>
+      <button id="verificar-ecg-prueba" type="button" hidden>Consultar guardado</button>
+      <p id="disponibilidad-guardado-prueba" role="status" aria-live="polite"></p>
+      <p id="estado-guardado-prueba" role="status" aria-live="polite"></p>
+      <ul id="resultados-prueba" hidden></ul>
+    </section>
+    <p><a href="/api/v1/ecg/circuito/pantalla">Volver a la selección normal del circuito</a></p>
+  </main>
+  <script src="/api/v1/ecg/circuito/frontend.js" defer></script>
+</body>
+</html>

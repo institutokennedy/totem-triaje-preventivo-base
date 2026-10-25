@@ -21,6 +21,13 @@
   let isCapturing = false;
   let stopRequested = false;
   let flowFinalized = false;
+  let episodioActivo = null;
+  let dispositivoEcg = null;
+  let isSaving = false;
+  let saveConfirmed = false;
+  let canSubmitCapture = true;
+  let needsVerification = false;
+  let savedResultId = null;
 
   function showStep(index, preserveError = false) {
     if (flowFinalized) return;
@@ -55,6 +62,224 @@
     return body;
   }
 
+  function sameCapture(left, right) {
+    return Boolean(
+      left && right &&
+      left.frecuencia_muestreo_hz === right.frecuencia_muestreo_hz &&
+      left.unidad === right.unidad &&
+      Array.isArray(left.muestras) && Array.isArray(right.muestras) &&
+      left.muestras.length === right.muestras.length &&
+      left.muestras.every((sample, index) => sample === right.muestras[index])
+    );
+  }
+
+  function updatePersistenceControls() {
+    const hasEpisode = episodioActivo !== null;
+    const saveButton = app.querySelector("#guardar-resultado");
+    const verifyButton = app.querySelector("#verificar-resultado");
+    app.querySelector("#persistencia-panel").hidden = false;
+    app.querySelector("#sin-contexto-persistencia").hidden = hasEpisode;
+    saveButton.hidden = false;
+    saveButton.disabled = !(hasEpisode && dispositivoEcg && capture && canSubmitCapture && !saveConfirmed && !isSaving);
+    verifyButton.hidden = !(hasEpisode && capture && needsVerification);
+    verifyButton.disabled = isSaving;
+  }
+
+  async function loadEpisodeContext() {
+    const rawId = new URLSearchParams(window.location.search).get("episodio_id");
+    if (rawId === null) {
+      app.querySelector("#episodio-contexto").textContent = "No se recibió un episodio activo. La señal puede simularse, pero el guardado queda deshabilitado.";
+      app.querySelector("#episodio-persistencia").textContent = "Sin episodio validado. Abrí esta pantalla desde el episodio real para habilitar el guardado.";
+      app.querySelector("#dispositivo-persistencia").textContent = "No se buscará dispositivo hasta validar un episodio.";
+      app.querySelector("#estado-guardado").textContent = "Guardado no disponible: falta un episodio real.";
+      updatePersistenceControls();
+      return;
+    }
+    const episodioId = Number(rawId);
+    if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(episodioId)) {
+      app.querySelector("#episodio-contexto").textContent = "El episodio_id de la URL no es un identificador positivo válido; no se habilitó el guardado.";
+      reportError(new Error("episodio_id inválido."));
+      app.querySelector("#estado-guardado").textContent = "Guardado no disponible: el episodio_id no es válido.";
+      updatePersistenceControls();
+      return;
+    }
+
+    const contextMessage = app.querySelector("#episodio-contexto");
+    const persistenceMessage = app.querySelector("#episodio-persistencia");
+    contextMessage.textContent = `Verificando el episodio de prueba ${episodioId}…`;
+    app.querySelector("#persistencia-panel").hidden = false;
+    app.querySelector("#sin-contexto-persistencia").hidden = true;
+    persistenceMessage.textContent = `Episodio de prueba #${episodioId}: verificando circuito en la API.`;
+    try {
+      const episode = await requestJson(`${API}/episodios/${episodioId}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (episode.id !== episodioId || !["GUARDIA", "COMPLETO"].includes(episode.tipo_circuito)) {
+        throw new Error("La API no devolvió un episodio válido de GUARDIA o COMPLETO.");
+      }
+      episodioActivo = episode;
+      if (episode.tipo_circuito === "GUARDIA") {
+        contextMessage.textContent = `Episodio #${episode.id}, circuito GUARDIA. Modo de prueba técnica; no se recibió clasificación roja y no se declara completado el flujo rojo HU-09.`;
+      } else {
+        contextMessage.textContent = `Episodio #${episode.id}, circuito COMPLETO. Prueba técnica HU-14; no requiere clasificación roja.`;
+      }
+      persistenceMessage.textContent = `Episodio #${episode.id} · ${episode.tipo_circuito} · estado ${episode.estado}.`;
+
+      const devices = await requestJson(`${API}/dispositivos`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!Array.isArray(devices)) throw new Error("La API de dispositivos devolvió un formato inválido.");
+      dispositivoEcg = devices.find((device) =>
+        device.codigo === "ECG-001" &&
+        device.tipo === "ECG" &&
+        device.activo === true &&
+        device.estado === "DISPONIBLE" &&
+        Number.isSafeInteger(device.id) && device.id > 0
+      ) ?? null;
+      if (dispositivoEcg === null) {
+        throw new Error("No se encontró un dispositivo ECG-001 activo y disponible. No se puede guardar la captura.");
+      }
+      app.querySelector("#dispositivo-persistencia").textContent =
+        `Dispositivo verificado por la API: ${dispositivoEcg.codigo} (ID ${dispositivoEcg.id}).`;
+    } catch (error) {
+      dispositivoEcg = null;
+      const detail = error instanceof Error ? error.message : "No se pudo verificar el episodio o el dispositivo.";
+      app.querySelector("#dispositivo-persistencia").textContent = detail;
+      app.querySelector("#estado-guardado").textContent = "No se puede guardar la captura: " + detail;
+      reportError(error);
+    } finally {
+      updatePersistenceControls();
+    }
+  }
+
+  async function obtenerResultadosPersistidos() {
+    const response = await requestJson(`${API}/ecg/resultados/${episodioActivo.id}`, {
+      headers: { Accept: "application/json" },
+    });
+    if (
+      response.episodio_id !== episodioActivo.id || response.modulo !== "ecg" ||
+      !Array.isArray(response.resultados)
+    ) {
+      throw new Error("La consulta devolvió resultados incompatibles con el episodio ECG.");
+    }
+    return response.resultados;
+  }
+
+  function mostrarResultados(resultados) {
+    const list = app.querySelector("#resultados-guardados");
+    list.replaceChildren();
+    for (const result of resultados) {
+      const item = document.createElement("li");
+      item.textContent = `Resultado #${result.id}: ${result.data.muestras.length} muestras, ${result.data.frecuencia_muestreo_hz} Hz, ${result.data.unidad}.`;
+      list.append(item);
+    }
+    list.hidden = resultados.length === 0;
+  }
+
+  async function verificarResultadoPendiente() {
+    if (!episodioActivo || !capture || isSaving) return;
+    isSaving = true;
+    updatePersistenceControls();
+    try {
+      const results = await obtenerResultadosPersistidos();
+      mostrarResultados(results);
+      const match = results.find((result) => sameCapture(result.data, capture));
+      needsVerification = false;
+      if (match) {
+        canSubmitCapture = false;
+        app.querySelector("#estado-guardado").textContent =
+          `La consulta encontró el resultado #${match.id} con estas mismas muestras. No se reenvió el POST para evitar un posible duplicado; esto no confirma que corresponda a la última solicitud.`;
+      } else {
+        canSubmitCapture = true;
+        app.querySelector("#estado-guardado").textContent =
+          "La consulta no encontró un resultado con estas muestras para el episodio. Podés reintentar el guardado.";
+      }
+    } catch (error) {
+      needsVerification = true;
+      canSubmitCapture = false;
+      app.querySelector("#estado-guardado").textContent =
+        `No se pudo verificar el estado en la API. Para evitar duplicados, el reenvío sigue bloqueado: ${error instanceof Error ? error.message : "error de consulta"}`;
+    } finally {
+      isSaving = false;
+      updatePersistenceControls();
+    }
+  }
+
+  async function reconcileUnconfirmedSave(error) {
+    canSubmitCapture = false;
+    needsVerification = true;
+    app.querySelector("#estado-guardado").textContent =
+      `El POST no recibió confirmación: ${error instanceof Error ? error.message : "error de red"} Consultando antes de permitir un reintento…`;
+    updatePersistenceControls();
+    try {
+      const results = await obtenerResultadosPersistidos();
+      mostrarResultados(results);
+      const match = results.find((result) => sameCapture(result.data, capture));
+      needsVerification = false;
+      if (match) {
+        app.querySelector("#estado-guardado").textContent =
+          `La consulta encontró el resultado #${match.id} con estas mismas muestras. No se declara confirmado el POST actual ni se reenvía para evitar duplicarlo.`;
+      } else {
+        canSubmitCapture = true;
+        app.querySelector("#estado-guardado").textContent =
+          "El POST no fue confirmado y la consulta no encontró estas muestras. Podés reintentar.";
+      }
+    } catch (queryError) {
+      needsVerification = true;
+      app.querySelector("#estado-guardado").textContent =
+        `No se confirmó el POST y tampoco se pudo consultar el estado (${queryError instanceof Error ? queryError.message : "error de consulta"}). Verificá antes de reintentar.`;
+    }
+  }
+
+  async function guardarCaptura() {
+    if (!episodioActivo || !dispositivoEcg || !capture || isSaving || saveConfirmed || !canSubmitCapture) return;
+    isSaving = true;
+    app.querySelector("#estado-guardado").textContent = "Enviando las muestras simuladas a la API…";
+    updatePersistenceControls();
+    try {
+      const saved = await requestJson(`${API}/ecg/resultados`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          episodio_id: episodioActivo.id,
+          dispositivo_id: dispositivoEcg.id,
+          origen: "SIMULADOR",
+          data: capture,
+        }),
+      });
+      if (!Number.isSafeInteger(saved.resultado_id) || saved.resultado_id <= 0) {
+        throw new Error("La respuesta del POST no incluyó un resultado_id válido.");
+      }
+      saveConfirmed = true;
+      savedResultId = saved.resultado_id;
+      canSubmitCapture = false;
+      needsVerification = true;
+      app.querySelector("#estado-guardado").textContent =
+        `La API confirmó el guardado del resultado #${savedResultId}. Verificando mediante la consulta del episodio…`;
+      updatePersistenceControls();
+      try {
+        const results = await obtenerResultadosPersistidos();
+        mostrarResultados(results);
+        if (results.some((result) => result.id === savedResultId && sameCapture(result.data, capture))) {
+          needsVerification = false;
+          app.querySelector("#estado-guardado").textContent =
+            `La API confirmó y la consulta verificó el guardado del resultado #${savedResultId}. Origen: SIMULADOR.`;
+        } else {
+          app.querySelector("#estado-guardado").textContent =
+            `La API confirmó el resultado #${savedResultId}, pero todavía no apareció en la consulta. No vuelvas a enviarlo.`;
+        }
+      } catch (queryError) {
+        app.querySelector("#estado-guardado").textContent =
+          `La API confirmó el resultado #${savedResultId}, pero falló la consulta de verificación: ${queryError instanceof Error ? queryError.message : "error de consulta"}. No vuelvas a enviarlo.`;
+      }
+    } catch (error) {
+      await reconcileUnconfirmedSave(error);
+    } finally {
+      isSaving = false;
+      updatePersistenceControls();
+    }
+  }
+
   function delay(milliseconds) {
     return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
   }
@@ -76,6 +301,14 @@
     app.querySelector("#cantidad-final").textContent = "—";
     app.querySelector("#frecuencia-final").textContent = "—";
     app.querySelector("#unidad-final").textContent = "—";
+    app.querySelector("#estado-guardado").textContent = "";
+    app.querySelector("#resultados-guardados").replaceChildren();
+    app.querySelector("#resultados-guardados").hidden = true;
+    saveConfirmed = false;
+    canSubmitCapture = true;
+    needsVerification = false;
+    savedResultId = null;
+    updatePersistenceControls();
   }
 
   function hasTechnicalInterference(samples) {
@@ -113,6 +346,7 @@
       ? `Simulación detenida. Se conservaron ${shown.length} muestra(s) ficticia(s).`
       : `Simulación finalizada. Se presentaron ${shown.length} muestras ficticias.`;
     app.querySelector("#detener-simulacion").hidden = true;
+    updatePersistenceControls();
   }
 
   async function startSimulation() {
@@ -143,6 +377,7 @@
         capture = null;
         app.querySelector("#estado-simulacion").textContent = "La señal presenta una condición técnica para repetir o finalizar; no se conserva en el resumen.";
         app.querySelector("#interferencia-panel").hidden = false;
+        updatePersistenceControls();
       }
     } catch (error) {
       app.querySelector("#estado-simulacion").textContent = "No se completó la simulación.";
@@ -152,6 +387,7 @@
       app.querySelector("#iniciar-simulacion").disabled = false;
       app.querySelector("#detener-simulacion").hidden = true;
       showStep(currentStep, true);
+      updatePersistenceControls();
     }
   }
 
@@ -187,5 +423,9 @@
   app.querySelector("#finalizar-simulacion").addEventListener("click", finishCaptureFlow);
   app.querySelector("#repetir-ecg").addEventListener("click", startSimulation);
   app.querySelector("#finalizar-ecg").addEventListener("click", finishCaptureFlow);
+  app.querySelector("#guardar-resultado").addEventListener("click", guardarCaptura);
+  app.querySelector("#verificar-resultado").addEventListener("click", verificarResultadoPendiente);
   showStep(0);
+  updatePersistenceControls();
+  void loadEpisodeContext();
 })();
