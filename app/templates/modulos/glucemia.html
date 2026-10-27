@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Módulo de Glucemia{% endblock %}
+
+{% block content %}
+<div class="container my-4">
+    <h2 class="mb-4">Módulo de Medición de Glucemia</h2>
+
+    <div id="modulo-glucemia" class="card p-4 shadow-sm">
+
+        <!-- 1. INSTRUCCIONES -->
+        <div id="estado-instrucciones" class="estado-seccion">
+            <h3>Instrucciones para la Medición</h3>
+            <p>Coloque su dedo sobre el sensor de luz (fotodiodo) para realizar la toma de glucemia no invasiva.</p>
+            <p class="text-muted"><small>Mantenga la posición fija durante la toma de datos.</small></p>
+            <button id="btn-comenzar" class="btn btn-primary mt-3">Comenzar</button>
+        </div>
+
+        <!-- 2. MIDIENDO -->
+        <div id="estado-midiendo" class="estado-seccion" style="display: none;">
+            <h3>Realizando la lectura...</h3>
+            <p>Aguarde un momento mientras el sensor/simulador captura los datos de glucemia.</p>
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Midiendo...</span>
+            </div>
+        </div>
+
+        <!-- 3. RESULTADO -->
+        <div id="estado-resultado" class="estado-seccion" style="display: none;">
+            <h3>Resultado Obtenido</h3>
+            <div class="mb-3 card bg-light p-3">
+                <p class="mb-1"><strong>Valor:</strong> <span id="res-valor">--</span></p>
+                <p class="mb-1"><strong>Unidad:</strong> <span id="res-unidad">--</span></p>
+                <p class="mb-0"><strong>Método:</strong> <span id="res-metodo">--</span></p>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button id="btn-repetir" class="btn btn-secondary">Repetir</button>
+                <button id="btn-confirmar" class="btn btn-success">Confirmar</button>
+            </div>
+        </div>
+
+        <!-- 4. CONFIRMADO -->
+        <div id="estado-confirmado" class="estado-seccion" style="display: none;">
+            <div class="alert alert-success" role="alert">
+                <h4 class="alert-heading">¡Medición Registrada Exitosamente!</h4>
+                <p>El resultado ha sido guardado correctamente en la base de datos.</p>
+            </div>
+            <button id="btn-continuar" class="btn btn-primary">Continuar al Panel</button>
+        </div>
+
+        <!-- 5. ERROR -->
+        <div id="estado-error" class="estado-seccion" style="display: none;">
+            <div class="alert alert-danger" role="alert">
+                <h4 class="alert-heading">Error Técnico</h4>
+                <p id="mensaje-error">Ocurrió un error al procesar la medición o al comunicarse con la API.</p>
+            </div>
+            <button id="btn-reintentar" class="btn btn-warning">Reintentar</button>
+        </div>
+
+    </div>
+</div>
+
+<script src="/static/js/glucemia.js"></script>
+{% endblock %}

@@ -59,3 +59,42 @@ def demo_references(test_engine, client) -> dict[str, int]:
             "episodio_id": episode.id,
             "dispositivo_id": device.id,
         }
+
+@pytest.fixture()
+def episodio_valido(test_engine) -> EpisodioAtencion:
+    with Session(test_engine) as session:
+        paciente = Paciente(
+            dni="11111111",
+            nombre="Paciente",
+            apellido="Glucemia",
+            fecha_nacimiento=date(1995, 5, 10),
+            email="glucemia@example.test",
+        )
+        session.add(paciente)
+        session.commit()
+        session.refresh(paciente)
+
+        episodio = EpisodioAtencion(
+            paciente_id=paciente.id,
+            tipo_circuito="DEMOSTRACION_TECNICA",
+        )
+        session.add(episodio)
+        session.commit()
+        session.refresh(episodio)
+
+        return episodio
+
+
+@pytest.fixture()
+def dispositivo_glucemia(test_engine) -> Dispositivo:
+    with Session(test_engine) as session:
+        dispositivo = Dispositivo(
+            codigo="GLUCEMIA-TEST-001",
+            nombre="Sensor de glucemia",
+            tipo="GLUCEMIA",
+        )
+        session.add(dispositivo)
+        session.commit()
+        session.refresh(dispositivo)
+
+        return dispositivo
