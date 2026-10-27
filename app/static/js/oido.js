@@ -63,15 +63,18 @@
   // -------------------------------------------------------------- formulario
   // Todas las casillas son opcionales: "Continuar" siempre está disponible.
   function actualizarOpcionesProblema() {
-    const marcado = $("chk-problema").checked;
+    const elegido = document.querySelector('input[name="tiene_problema_auditivo"]:checked');
+    const marcado = !!elegido && elegido.value === "true";
     $("opciones-problema").hidden = !marcado;
-    $("chk-problema").setAttribute("aria-expanded", String(marcado));
+    const radioSi = $("chk-problema-si");
+    if (radioSi) radioSi.setAttribute("aria-expanded", String(marcado));
     if (!marcado) {
       document.querySelectorAll('input[name="problema"]').forEach((c) => {
         c.checked = false;
       });
       actualizarCampoOtro();
     }
+    actualizarEstadoContinuar();
   }
 
   function actualizarCampoOtro() {
@@ -82,6 +85,23 @@
     } else {
       $("txt-otro").value = "";
     }
+    actualizarEstadoContinuar();
+  }
+
+  function actualizarEstadoContinuar() {
+    const boton = $("btn-continuar");
+    const respuesta = document.querySelector('input[name="tiene_problema_auditivo"]:checked');
+    const tieneProblema = respuesta && respuesta.value === "true";
+    const opciones = Array.from(document.querySelectorAll('input[name="problema"]'));
+    const seleccionoProblema = opciones.some((c) => c.checked);
+    const otroMarcado = $("chk-otro").checked;
+    const textoOtro = $("txt-otro").value.trim();
+    const hayOtroValido = !otroMarcado || (otroMarcado && textoOtro.length > 0);
+
+    const habilitado = !respuesta || (!tieneProblema && respuesta.value === "false") ||
+      (tieneProblema && seleccionoProblema && hayOtroValido);
+
+    boton.disabled = !habilitado;
   }
 
   function valoresMarcados(nombre) {
@@ -91,9 +111,28 @@
   }
 
   function continuarDesdeFormulario() {
+    const respuesta = document.querySelector('input[name="tiene_problema_auditivo"]:checked');
+    if (!respuesta) {
+      mensaje("Debe indicar si presenta o no algún problema de audición.", true);
+      return;
+    }
+
+    const tieneProblema = respuesta.value === "true";
+    const opciones = Array.from(document.querySelectorAll('input[name="problema"]'));
+    const seleccionoProblema = opciones.some((c) => c.checked);
+    const otroMarcado = $("chk-otro").checked;
+    const textoOtro = $("txt-otro").value.trim();
+    const hayOtroValido = !otroMarcado || (otroMarcado && textoOtro.length > 0);
+
+    if (tieneProblema && (!seleccionoProblema || !hayOtroValido)) {
+      mensaje("Si indica que sí presenta un problema, debe seleccionar al menos una opción.", true);
+      actualizarEstadoContinuar();
+      return;
+    }
+
     const problemasAuditivos = valoresMarcados("problema");
     estado.formulario = {
-      tiene_problema_auditivo: $("chk-problema").checked,
+      tiene_problema_auditivo: tieneProblema,
       problemas_auditivos: problemasAuditivos,
       otro_problema: $("txt-otro").value.trim(),
       factores: valoresMarcados("factor"),
@@ -401,9 +440,16 @@
       return;
     }
     $("progreso-total").textContent = String(FRECUENCIAS_HZ.length * 2);
-    $("chk-problema").addEventListener("change", actualizarOpcionesProblema);
+    document.querySelectorAll('input[name="tiene_problema_auditivo"]').forEach((radio) => {
+      radio.addEventListener("change", actualizarOpcionesProblema);
+    });
+    document.querySelectorAll('input[name="problema"]').forEach((checkbox) => {
+      checkbox.addEventListener("change", actualizarEstadoContinuar);
+    });
     $("chk-otro").addEventListener("change", actualizarCampoOtro);
+    $("txt-otro").addEventListener("input", actualizarEstadoContinuar);
     $("btn-continuar").addEventListener("click", continuarDesdeFormulario);
+    actualizarEstadoContinuar();
     $("btn-comenzar").addEventListener("click", comenzar);
     $("btn-izquierdo").addEventListener(
       "click",

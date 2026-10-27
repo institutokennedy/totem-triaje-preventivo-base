@@ -7,6 +7,19 @@
   .modulo-oido fieldset { margin: 1rem 0; padding: .8rem 1rem; }
   .modulo-oido legend { font-weight: 600; }
   .modulo-oido label { display: block; margin: .35rem 0; cursor: pointer; }
+  .modulo-oido .respuesta-problema {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: .5rem;
+  }
+  .modulo-oido .respuesta-problema label {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    margin: 0;
+  }
   .modulo-oido .sub-opciones { margin: .5rem 0 0 1.5rem; }
   .modulo-oido #txt-otro { margin-left: .5rem; }
   .modulo-oido .instrucciones-pasos {
@@ -45,11 +58,17 @@
     <h2>Completar el formulario</h2>
 
     <fieldset>
-      <legend>¿Presenta algún problema o inconveniente de audición?</legend>
-      <label>
-        <input type="checkbox" id="chk-problema" aria-controls="opciones-problema" aria-expanded="false">
-        Sí
-      </label>
+      <legend>¿Presenta algún problema o inconveniente de audición? (debe marcar si o si alguna)</legend>
+      <div class="respuesta-problema" role="radiogroup" aria-label="¿Presenta algún problema o inconveniente de audición? (debe marcar si o si alguna)">
+        <label>
+          <input type="radio" name="tiene_problema_auditivo" id="chk-problema-si" value="true" aria-controls="opciones-problema" aria-expanded="false">
+          Sí
+        </label>
+        <label>
+          <input type="radio" name="tiene_problema_auditivo" id="chk-problema-no" value="false">
+          No
+        </label>
+      </div>
 
       <div id="opciones-problema" class="sub-opciones" hidden>
         <p>Seleccione las opciones que correspondan:</p>
