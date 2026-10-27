@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" fill="none">
+  <rect x="1" y="1" width="158" height="118" rx="18" fill="#E8F2EF"/>
+  <path d="M52 32H20m0 0 7-7m-7 7 7 7" stroke="#087E72" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M108 32h32m0 0-7-7m7 7-7 7" stroke="#C65A45" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="36" y="54" text-anchor="middle" fill="#05645B" font-family="Arial, sans-serif" font-size="10" font-weight="700">IZQUIERDA</text>
+  <text x="124" y="54" text-anchor="middle" fill="#A44434" font-family="Arial, sans-serif" font-size="10" font-weight="700">DERECHA</text>
+  <path d="M42 84c0-7 6-13 13-13h50c7 0 13 6 13 13v5c0 5-4 9-9 9H51c-5 0-9-4-9-9v-5Z" fill="#17332F"/>
+  <path d="M80 76 89 48" stroke="#60716D" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="91" cy="42" r="10" fill="#C65A45" stroke="#A44434" stroke-width="3"/>
+  <rect x="69" y="84" width="22" height="9" rx="4" fill="#E8A23A"/>
+  <text x="80" y="111" text-anchor="middle" fill="#17332F" font-family="Arial, sans-serif" font-size="9" font-weight="700">PRESIONAR = NO ESCUCHÉ</text>
+</svg>

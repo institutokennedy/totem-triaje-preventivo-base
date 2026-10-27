@@ -96,7 +96,7 @@ def listar_resultados_oido(episodio_id: int, session: Session = Depends(get_sess
 
 @router.post("/respuestas", status_code=status.HTTP_201_CREATED)
 def publicar_respuesta(payload: RespuestaJoystickCreate, session: Session = Depends(get_session)):
-    """Recibe una respuesta del joystick (arriba = True / abajo = False)."""
+    """Recibe el lado indicado por el joystick (o una respuesta booleana antigua)."""
     global _secuencia
     if session.get(Dispositivo, payload.dispositivo_id) is None:
         raise HTTPException(status_code=404, detail="Dispositivo no encontrado")

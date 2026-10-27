@@ -90,6 +90,72 @@ def test_crear_resultado_exitoso(entorno):
     assert r.json()[0]["data_json"]["nivel_senal"] == "NORMAL"
 
 
+def test_crear_resultado_con_lados_aleatorios(entorno):
+    client, ep, disp = entorno
+    r = client.post(
+        "/api/v1/oido/resultados",
+        json={
+            "episodio_id": ep,
+            "dispositivo_id": disp,
+            "origen": "ESP32",
+            "data": {
+                "ensayos": [
+                    {
+                        "frecuencia_hz": 500,
+                        "lado_estimulo": "IZQUIERDO",
+                        "respuesta": "DERECHO",
+                    },
+                    {
+                        "frecuencia_hz": 500,
+                        "lado_estimulo": "DERECHO",
+                        "respuesta": "NO_ESCUCHE",
+                    },
+                ]
+            },
+        },
+    )
+
+    assert r.status_code == 201
+    ensayos = r.json()["data_json"]["ensayos"]
+    assert ensayos[0]["lado_estimulo"] == "IZQUIERDO"
+    assert ensayos[0]["respuesta"] == "DERECHO"
+    assert ensayos[1]["respuesta"] == "NO_ESCUCHE"
+
+
+def test_resultado_con_ensayo_invalido_o_formatos_mezclados(entorno):
+    client, ep, disp = entorno
+    base = {
+        "episodio_id": ep,
+        "dispositivo_id": disp,
+        "origen": "ESP32",
+        "data": {
+            "ensayos": [
+                {
+                    "frecuencia_hz": 500,
+                    "lado_estimulo": "CENTRO",
+                    "respuesta": "DERECHO",
+                }
+            ]
+        },
+    }
+
+    assert client.post("/api/v1/oido/resultados", json=base).status_code == 422
+
+    base["data"] = {
+        "ensayos": [
+            {
+                "frecuencia_hz": 500,
+                "lado_estimulo": "IZQUIERDO",
+                "respuesta": "DERECHO",
+            }
+        ],
+        "frecuencias_hz": [500],
+        "resultados_oido_derecho": [True],
+        "resultados_oido_izquierdo": [False],
+    }
+    assert client.post("/api/v1/oido/resultados", json=base).status_code == 422
+
+
 def test_resultado_guarda_nivel_de_senal_reducido(entorno):
     client, ep, disp = entorno
     r = client.post(
@@ -159,6 +225,29 @@ def test_respuesta_joystick_publicar_y_consultar(entorno):
     client.post("/api/v1/oido/respuestas", json={"dispositivo_id": disp, "respuesta": False})
     r = client.get(f"/api/v1/oido/respuestas/{disp}", params={"despues_de": seq})
     assert [x["respuesta"] for x in r.json()["respuestas"]] == [False]
+
+
+@pytest.mark.parametrize("lado", ["IZQUIERDO", "DERECHO"])
+def test_respuesta_joystick_acepta_lado(lado, entorno):
+    client, _, disp = entorno
+    r = client.post(
+        "/api/v1/oido/respuestas",
+        json={"dispositivo_id": disp, "respuesta": lado},
+    )
+
+    assert r.status_code == 201
+    assert r.json()["respuesta"] == lado
+
+
+def test_respuesta_joystick_acepta_pulsacion_no_escuche(entorno):
+    client, _, disp = entorno
+    r = client.post(
+        "/api/v1/oido/respuestas",
+        json={"dispositivo_id": disp, "respuesta": "NO_ESCUCHE"},
+    )
+
+    assert r.status_code == 201
+    assert r.json()["respuesta"] == "NO_ESCUCHE"
 
 
 def test_respuesta_joystick_dispositivo_inexistente(entorno):

@@ -52,6 +52,35 @@ def test_entrada_calcula_frecuencias_no_percibidas_y_no_incluye_datos_personales
         assert clave not in texto
 
 
+def test_entrada_ia_conserva_ensayos_auditivos_sin_inferir_resultados():
+    modulos = {
+        "oido": [
+            {
+                "data": {
+                    "ensayos": [
+                        {
+                            "frecuencia_hz": 1000,
+                            "lado_estimulo": "IZQUIERDO",
+                            "respuesta": "DERECHO",
+                        },
+                        {
+                            "frecuencia_hz": 2000,
+                            "lado_estimulo": "DERECHO",
+                            "respuesta": "NO_ESCUCHE",
+                        },
+                    ]
+                }
+            }
+        ]
+    }
+
+    oido = construir_entrada(16, modulos, [])["modulos"]["oido"]
+
+    assert oido["total_ensayos"] == 2
+    assert oido["ensayos"][0]["respuesta"] == "DERECHO"
+    assert oido["ensayos"][1]["respuesta"] == "NO_ESCUCHE"
+
+
 def test_instrucciones_de_ia_usan_cuestionario_en_la_clasificacion():
     assert "Integra en la clasificación los síntomas y factores de riesgo" in analisis_ia.SYSTEM_PROMPT
     assert "no como diagnósticos confirmados" in analisis_ia.SYSTEM_PROMPT

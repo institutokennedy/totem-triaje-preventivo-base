@@ -89,8 +89,10 @@ Ante la duda entre dos niveles, elige el más prudente (el más alto).
 
 Criterios:
 - Basa tu análisis SOLO en los datos recibidos. No inventes valores. Si un módulo no tiene datos, no lo penalices: indícalo.
-- Audiometría: es un tamizaje con equipo no calibrado. Las frecuencias no percibidas por oído están calculadas en los datos. \
-No concluyas que hay pérdida auditiva; señala los hallazgos y recomienda control profesional cuando corresponda. \
+- Audiometría: es un tamizaje con equipo no calibrado. En el formato nuevo, "ensayos" contiene el lado del tono y el lado indicado por la persona; \
+describe las respuestas sin inferir una pérdida auditiva ni una capacidad de localización clínica. En el formato anterior, \
+las frecuencias no percibidas por oído están calculadas en los datos. No concluyas que hay pérdida auditiva; \
+señala los hallazgos y recomienda control profesional cuando corresponda. \
 Si nivel_senal es REDUCIDO_POR_AUTOINFORME, aclara que el volumen se redujo por una respuesta afirmativa \
 y no interpretes la falta de percepción como comparable con una medición de volumen normal. \
 Integra en la clasificación los síntomas y factores de riesgo marcados en el cuestionario, además de las mediciones. \
@@ -116,6 +118,34 @@ Escribe en español."""
 def _preparar_modulo(nombre: str, datos: dict) -> dict:
     if nombre != "oido":
         return datos
+    ensayos = datos.get("ensayos")
+    if isinstance(ensayos, list):
+        return {
+            "total_ensayos": len(ensayos),
+            "ensayos": [
+                {
+                    "frecuencia_hz": ensayo["frecuencia_hz"],
+                    "lado_estimulo": ensayo["lado_estimulo"],
+                    "respuesta": ensayo["respuesta"],
+                }
+                for ensayo in ensayos
+                if isinstance(ensayo, dict)
+                and {"frecuencia_hz", "lado_estimulo", "respuesta"} <= ensayo.keys()
+            ],
+            "nivel_senal": datos.get("nivel_senal", "NORMAL"),
+            "cuestionario": {
+                clave: datos["cuestionario"][clave]
+                for clave in (
+                    "tiene_problema_auditivo",
+                    "problemas_auditivos",
+                    "factores",
+                )
+                if isinstance(datos.get("cuestionario"), dict)
+                and clave in datos["cuestionario"]
+            }
+            if isinstance(datos.get("cuestionario"), dict)
+            else None,
+        }
     frecuencias = datos.get("frecuencias_hz") or []
     derecho = datos.get("resultados_oido_derecho") or []
     izquierdo = datos.get("resultados_oido_izquierdo") or []

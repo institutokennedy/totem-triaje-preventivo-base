@@ -9,6 +9,33 @@
   .modulo-oido label { display: block; margin: .35rem 0; cursor: pointer; }
   .modulo-oido .sub-opciones { margin: .5rem 0 0 1.5rem; }
   .modulo-oido #txt-otro { margin-left: .5rem; }
+  .modulo-oido .instrucciones-pasos {
+    display: grid;
+    gap: .75rem;
+    margin: 1rem 0 1.5rem;
+    padding: 0;
+    list-style: none;
+  }
+  .modulo-oido .instrucciones-pasos li {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 0;
+    padding: .75rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #f8faf9;
+  }
+  .modulo-oido .instrucciones-pasos img {
+    flex: 0 0 7rem;
+    width: 7rem;
+    height: 6rem;
+    object-fit: contain;
+  }
+  @media (max-width: 560px) {
+    .modulo-oido .instrucciones-pasos li { align-items: flex-start; gap: .7rem; padding: .65rem; }
+    .modulo-oido .instrucciones-pasos img { flex-basis: 4.5rem; width: 4.5rem; height: 4.5rem; }
+  }
 </style>
 
 <section id="oido-modulo" class="modulo-oido" data-episodio-id="{{ episodio_id | default('') }}">
@@ -61,31 +88,36 @@
       Esta reducción no garantiza un nivel seguro en todos los auriculares. Si siente molestia,
       detenga la prueba y retire los auriculares.
     </p>
-    <ol>
-      <li>Colóquese los auriculares conectados a la computadora.</li>
-      <li>Presione "Comenzar". Se reproducirá un tono, primero en el oído derecho y luego en el izquierdo.</li>
-      <li>Guíe el centro del joystick hacia <strong>ARRIBA</strong> para indicar un <strong>"SÍ"</strong> (escucho el sonido).</li>
-      <li>Guíe el centro del joystick hacia <strong>ABAJO</strong> para indicar un <strong>"NO"</strong> (no escucho el sonido).</li>
+    <ol class="instrucciones-pasos">
+      <li>
+        <img src="{{ url_for('static', path='img/instruccion-auriculares.svg') }}" alt="Ilustración de una persona colocándose auriculares">
+        <span>Colóquese auriculares <strong>estéreo</strong> conectados a la computadora.</span>
+      </li>
+      <li>
+        <img src="{{ url_for('static', path='img/instruccion-tonos.svg') }}" alt="Ilustración de tonos que pueden escucharse desde distintos lados">
+        <span>Presione "Comenzar". Se reproducirán tonos desde distintos lados, en orden aleatorio. No se le indicará de qué lado proviene cada uno.</span>
+      </li>
+      <li>
+        <img src="{{ url_for('static', path='img/instruccion-joystick.svg') }}" alt="Ilustración de un joystick con flechas hacia izquierda y derecha y un botón para presionar">
+        <span>Después de cada tono, mueva el joystick a la <strong>IZQUIERDA</strong> o a la <strong>DERECHA</strong> según el lado donde lo escuchó. Si no oyó ningún tono, <strong>presione hacia abajo el botón del joystick</strong>. También puede usar los botones de respuesta en pantalla.</span>
+      </li>
     </ol>
     <button id="btn-comenzar" type="button">Comenzar</button>
   </div>
 
   <div id="paso-medicion" hidden>
     <div class="estimulo-actual" aria-live="polite">
-      <p>Oído evaluado: <strong id="oido-actual">—</strong></p>
       <p>Frecuencia actual: <strong id="frecuencia-actual">—</strong> Hz</p>
       <p>Progreso: <span id="progreso-actual">0</span> / <span id="progreso-total">0</span></p>
     </div>
     <p id="estado-respuesta" role="status" aria-live="polite"></p>
-    <p>Guíe el centro del joystick hacia <strong>arriba (SÍ)</strong> o hacia <strong>abajo (NO)</strong>.</p>
+    <p>Indique el lado donde escuchó el tono. Si no lo oyó, presione hacia abajo el botón del joystick o elija "No escuché".</p>
+    <div class="acciones-respuesta">
+      <button id="btn-izquierdo" type="button">Izquierda</button>
+      <button id="btn-derecho" type="button">Derecha</button>
+      <button id="btn-no-escuche" type="button">No escuché</button>
+    </div>
 
-    <details class="respaldo">
-      <summary>Respuesta manual (respaldo si el joystick no responde)</summary>
-      <div class="acciones-respuesta">
-        <button id="btn-escuche" type="button">Sí escucho</button>
-        <button id="btn-no-escuche" type="button">No escucho</button>
-      </div>
-    </details>
   </div>
 
   <div id="paso-resumen" hidden>
@@ -94,8 +126,8 @@
       <thead>
         <tr>
           <th>Frecuencia (Hz)</th>
-          <th>Oído derecho</th>
-          <th>Oído izquierdo</th>
+          <th>Lado del tono</th>
+          <th>Lado indicado</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -111,5 +143,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', path='js/oido.js') }}?v=2"></script>
+<script src="{{ url_for('static', path='js/oido.js') }}?v=4"></script>
 {% endblock %}

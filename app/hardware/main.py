@@ -1,18 +1,20 @@
 """ESP32 (MicroPython) - Módulo de Oído (solo entrada).
 
 El sonido lo reproduce el software (navegador) por los auriculares de la computadora.
-El ESP32 solo lee el joystick analógico:
+El ESP32 lee el eje horizontal del joystick analógico:
 
-    joystick ARRIBA  -> "sí escucho"  -> {"respuesta": true}
-    joystick ABAJO   -> "no escucho"  -> {"respuesta": false}
+    joystick IZQUIERDA -> {"respuesta": "IZQUIERDO"}
+    joystick DERECHA   -> {"respuesta": "DERECHO"}
+    pulsar joystick    -> {"respuesta": "NO_ESCUCHE"}
 
 y envía cada respuesta como JSON a FastAPI:
 
   GET  /api/v1/dispositivos        -> busca OIDO-001
   POST /api/v1/dispositivos        -> lo registra si no existe
-  POST /api/v1/oido/respuestas     -> {"dispositivo_id": N, "respuesta": bool, "origen": "ESP32"}
+  POST /api/v1/oido/respuestas     -> {"dispositivo_id": N, "respuesta": "IZQUIERDO|DERECHO|NO_ESCUCHE", "origen": "ESP32"}
 
 El navegador consulta esas respuestas y arma el resultado final del episodio.
+El botón pulsador (SW) indica que no escuchó el tono.
 No tocar el joystick al encender la placa (se calibra el centro).
 """
 import time
@@ -33,11 +35,12 @@ HEADERS = {"Content-Type": "application/json"}
 
 # ---------------------------------------------------------------- joystick
 class Joystick:
-    """Eje Y analógico (ADC1)."""
+    """Eje X analógico (ADC1): -1 = izquierda, +1 = derecha."""
 
-    def __init__(self, pin_y):
-        self.adc = ADC(Pin(pin_y))
+    def __init__(self, pin_x, pin_sw):
+        self.adc = ADC(Pin(pin_x))
         self.adc.atten(ADC.ATTN_11DB)  # rango ~0-3.3 V
+        self.boton = Pin(pin_sw, Pin.IN, Pin.PULL_UP)
         self.centro = 32768
         self.calibrar()
 
@@ -58,9 +61,9 @@ class Joystick:
         print("Centro del joystick:", self.centro)
 
     def direccion(self):
-        """+1 = arriba, -1 = abajo, 0 = centro."""
+        """+1 = derecha, -1 = izquierda, 0 = centro."""
         desvio = self._leer() - self.centro
-        if config.INVERTIR_EJE_Y:
+        if config.INVERTIR_EJE_X:
             desvio = -desvio
         umbral = int(65535 * config.UMBRAL_DESVIO)
         if desvio > umbral:
@@ -74,13 +77,20 @@ class Joystick:
             time.sleep_ms(10)
 
     def esperar_gesto(self):
-        """Bloquea hasta que el joystick se sostenga arriba/abajo el tiempo mínimo.
+        """Espera un lado sostenido o una pulsación confirmada del botón.
 
-        Devuelve +1 (arriba) o -1 (abajo).
+        Devuelve +1 (derecha), -1 (izquierda) o 0 (botón: no escuché).
         """
         previo = 0
         desde = None
         while True:
+            if self.boton.value() == 0:
+                time.sleep_ms(30)
+                if self.boton.value() == 0:
+                    while self.boton.value() == 0:
+                        time.sleep_ms(10)
+                    return 0
+
             actual = self.direccion()
             if actual != 0 and actual == previo:
                 if time.ticks_diff(time.ticks_ms(), desde) >= config.TIEMPO_CONFIRMACION_MS:
@@ -91,7 +101,7 @@ class Joystick:
             time.sleep_ms(5)
 
 
-joystick = Joystick(config.PIN_JOY_Y)
+joystick = Joystick(config.PIN_JOY_X, config.PIN_JOY_SW)
 
 
 # -------------------------------------------------------------------- red
@@ -151,11 +161,11 @@ def obtener_dispositivo_id():
         resp.close()
 
 
-def enviar_respuesta(dispositivo_id, escucho):
+def enviar_respuesta(dispositivo_id, lado):
     """POST /api/v1/oido/respuestas. Devuelve True si la API responde 201."""
     payload = {
         "dispositivo_id": dispositivo_id,
-        "respuesta": escucho,
+        "respuesta": lado,
         "origen": config.ORIGEN,
     }
     for intento in range(1, config.INTENTOS_ENVIO + 1):
@@ -197,11 +207,16 @@ def main():
 
     while True:
         gesto = joystick.esperar_gesto()
-        escucho = gesto == 1  # arriba = sí, abajo = no
-        print("Respuesta:", "SI" if escucho else "NO")
-        if not enviar_respuesta(dispositivo_id, escucho):
+        if gesto == 0:
+            lado = "NO_ESCUCHE"
+            print("Respuesta: NO ESCUCHE")
+        else:
+            lado = "DERECHO" if gesto == 1 else "IZQUIERDO"
+            print("Lado indicado:", lado)
+        if not enviar_respuesta(dispositivo_id, lado):
             print("No se pudo enviar la respuesta; el paciente puede repetir el movimiento.")
-        joystick.esperar_centro()
+        if gesto != 0:
+            joystick.esperar_centro()
 
 
 main()

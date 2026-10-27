@@ -93,6 +93,22 @@ def _resumen_oido(por_modulo: dict):
     datos = registros[-1].get("data") if registros else None
     if not isinstance(datos, dict):
         return NO_REGISTRADO, NO_REGISTRADO
+    ensayos = datos.get("ensayos")
+    if isinstance(ensayos, list):
+        der = sum(
+            1
+            for ensayo in ensayos
+            if isinstance(ensayo, dict) and ensayo.get("respuesta") == "DERECHO"
+        )
+        izq = sum(
+            1
+            for ensayo in ensayos
+            if isinstance(ensayo, dict) and ensayo.get("respuesta") == "IZQUIERDO"
+        )
+        return (
+            f"{der} {'respuesta señaló' if der == 1 else 'respuestas señalaron'} el lado derecho",
+            f"{izq} {'respuesta señaló' if izq == 1 else 'respuestas señalaron'} el lado izquierdo",
+        )
     n = len(datos.get("frecuencias_hz", []))
     der = sum(1 for x in datos.get("resultados_oido_derecho", []) if x is True)
     izq = sum(1 for x in datos.get("resultados_oido_izquierdo", []) if x is True)
@@ -150,11 +166,21 @@ def construir_reporte(
             mediciones.append([etiqueta, _presion(por_modulo)])
         else:
             mediciones.append([etiqueta, _con_unidad(_buscar(por_modulo, claves), unidad)])
-    der, izq = _resumen_oido(por_modulo)
-    mediciones.append(["Audición oído derecho", der])
-    mediciones.append(["Audición oído izquierdo", izq])
     registros_oido = por_modulo.get("oido")
     datos_oido = registros_oido[-1].get("data") if registros_oido else {}
+    der, izq = _resumen_oido(por_modulo)
+    if isinstance(datos_oido, dict) and isinstance(datos_oido.get("ensayos"), list):
+        mediciones.append(["Respuestas que indicaron derecha", der])
+        mediciones.append(["Respuestas que indicaron izquierda", izq])
+        no_escucho = sum(
+            1
+            for ensayo in datos_oido["ensayos"]
+            if isinstance(ensayo, dict) and ensayo.get("respuesta") == "NO_ESCUCHE"
+        )
+        mediciones.append(["Tonos que la persona indicó no escuchar", str(no_escucho)])
+    else:
+        mediciones.append(["Audición oído derecho", der])
+        mediciones.append(["Audición oído izquierdo", izq])
     nivel_senal = (
         datos_oido.get("nivel_senal", "NORMAL")
         if isinstance(datos_oido, dict)

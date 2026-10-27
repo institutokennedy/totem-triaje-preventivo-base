@@ -7,7 +7,6 @@
 
   // Frecuencias de estímulo en Hz (configurables; sin interpretación clínica).
   const FRECUENCIAS_HZ = [250, 500, 1000, 2000, 4000, 8000];
-  const OIDOS = ["derecho", "izquierdo"]; // el orden define el canal: 0 = derecho, 1 = izquierdo
   const SIGUIENTE_URL = "/resumen";
 
   const DURACION_TONO_MS = 1500;
@@ -36,9 +35,8 @@
     dispositivoId: null,
     cursor: 0,
     indice: 0,
-    oidoIdx: 0,
-    derecho: [],
-    izquierdo: [],
+    estimulos: [],
+    ensayos: [],
     porJoystick: 0,
     porManual: 0,
     audio: null,
@@ -152,10 +150,13 @@
     const Contexto = window.AudioContext || window.webkitAudioContext;
     if (!Contexto) throw new Error("Este navegador no permite reproducir audio");
     if (!estado.audio) estado.audio = new Contexto();
+    if (typeof estado.audio.createStereoPanner !== "function") {
+      throw new Error("Este navegador no permite separar el audio en estéreo");
+    }
     return estado.audio.state === "suspended" ? estado.audio.resume() : Promise.resolve();
   }
 
-  // Reproduce un tono senoidal solo en el canal del oído evaluado (derecho +1, izquierdo -1).
+  // Reproduce el tono en un solo canal (derecho +1, izquierdo -1).
   function reproducirTono(frecuenciaHz, oidoIdx) {
     const ctx = estado.audio;
     const osc = ctx.createOscillator();
@@ -174,14 +175,10 @@
     ganancia.gain.linearRampToValueAtTime(0, t + duracion);
 
     osc.connect(ganancia);
-    if (ctx.createStereoPanner) {
-      const panner = ctx.createStereoPanner();
-      panner.pan.value = oidoIdx === 0 ? 1 : -1;
-      ganancia.connect(panner);
-      panner.connect(ctx.destination);
-    } else {
-      ganancia.connect(ctx.destination);
-    }
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = oidoIdx === 0 ? 1 : -1;
+    ganancia.connect(panner);
+    panner.connect(ctx.destination);
     osc.start(t);
     osc.stop(t + duracion);
   }
@@ -193,6 +190,15 @@
     );
     if (!resp.ok) throw new Error("sondeo " + resp.status);
     return resp.json(); // { ultimo, respuestas: [{ seq, respuesta, ... }] }
+  }
+
+  function normalizarLado(valor) {
+    if (valor === "IZQUIERDO" || valor === "DERECHO" || valor === "NO_ESCUCHE") {
+      return valor;
+    }
+    if (valor === true) return "DERECHO";
+    if (valor === false) return "IZQUIERDO";
+    throw new Error("El joystick envió una respuesta desconocida");
   }
 
   // Descarta cualquier respuesta anterior al inicio del estímulo.
@@ -227,7 +233,7 @@
           }
           if (activo && datos.respuestas.length > 0) {
             estado.cursor = datos.ultimo; // descarta respuestas extra
-            terminar(datos.respuestas[0].respuesta, "joystick");
+            terminar(normalizarLado(datos.respuestas[0].respuesta), "joystick");
           }
         } catch (_) {
           estado.errorRed = true;
@@ -240,14 +246,25 @@
   }
 
   // ------------------------------------------------------------------ prueba
+  function crearOrdenEstimulos() {
+    const estimulos = FRECUENCIAS_HZ.flatMap((frecuencia_hz) => [
+      { frecuencia_hz, lado_estimulo: "IZQUIERDO" },
+      { frecuencia_hz, lado_estimulo: "DERECHO" },
+    ]);
+    for (let i = estimulos.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [estimulos[i], estimulos[j]] = [estimulos[j], estimulos[i]];
+    }
+    return estimulos;
+  }
+
   function reiniciar() {
     estado.indice = 0;
-    estado.oidoIdx = 0;
-    estado.derecho = [];
-    estado.izquierdo = [];
+    estado.estimulos = crearOrdenEstimulos();
+    estado.ensayos = [];
     estado.porJoystick = 0;
     estado.porManual = 0;
-    $("progreso-total").textContent = String(FRECUENCIAS_HZ.length * OIDOS.length);
+    $("progreso-total").textContent = String(estado.estimulos.length);
     $("tabla-respuestas").querySelector("tbody").innerHTML = "";
     $("estado-respuesta").textContent = "";
     $("btn-confirmar").disabled = false;
@@ -255,34 +272,31 @@
   }
 
   function actualizarEstimulo() {
-    $("oido-actual").textContent = OIDOS[estado.oidoIdx];
-    $("frecuencia-actual").textContent = String(FRECUENCIAS_HZ[estado.indice]);
-    $("progreso-actual").textContent = String(
-      estado.oidoIdx * FRECUENCIAS_HZ.length + estado.indice + 1
-    );
+    $("frecuencia-actual").textContent = String(estado.estimulos[estado.indice].frecuencia_hz);
+    $("progreso-actual").textContent = String(estado.indice + 1);
   }
 
   async function ejecutarPrueba() {
-    for (let o = 0; o < OIDOS.length; o++) {
-      for (let i = 0; i < FRECUENCIAS_HZ.length; i++) {
-        estado.oidoIdx = o;
-        estado.indice = i;
-        actualizarEstimulo();
-        $("estado-respuesta").textContent = "Escuche el sonido y responda con el joystick...";
+    for (let i = 0; i < estado.estimulos.length; i++) {
+      estado.indice = i;
+      const estimulo = estado.estimulos[i];
+      actualizarEstimulo();
+      $("estado-respuesta").textContent = "Escuche el tono y responda con el joystick...";
 
-        await sincronizarCursor();
-        reproducirTono(FRECUENCIAS_HZ[i], o); // no se espera: puede responder durante el tono
-        const r = await esperarRespuesta();
+      await sincronizarCursor();
+      reproducirTono(estimulo.frecuencia_hz, estimulo.lado_estimulo === "DERECHO" ? 0 : 1);
+      const respuesta = await esperarRespuesta();
 
-        (o === 0 ? estado.derecho : estado.izquierdo).push(r.valor);
-        if (r.fuente === "manual") estado.porManual += 1;
-        else estado.porJoystick += 1;
+      estado.ensayos.push({
+        frecuencia_hz: estimulo.frecuencia_hz,
+        lado_estimulo: estimulo.lado_estimulo,
+        respuesta: respuesta.valor,
+      });
+      if (respuesta.fuente === "manual") estado.porManual += 1;
+      else estado.porJoystick += 1;
 
-        $("estado-respuesta").textContent = r.valor
-          ? "Respuesta recibida: sí escucha"
-          : "Respuesta recibida: no escucha";
-        await pausa(PAUSA_ENTRE_TONOS_MS);
-      }
+      $("estado-respuesta").textContent = "Respuesta registrada.";
+      await pausa(PAUSA_ENTRE_TONOS_MS);
     }
     renderResumen();
     mostrar("paso-resumen");
@@ -307,22 +321,28 @@
     }
   }
 
-  function textoRespuesta(valor) {
-    return valor ? "Sí escucha" : "No escucha";
+  function textoLado(valor) {
+    return {
+      IZQUIERDO: "Izquierda",
+      DERECHO: "Derecha",
+      NO_ESCUCHE: "No escuché",
+    }[valor] || "Sin respuesta";
   }
 
   function renderResumen() {
     const tbody = $("tabla-respuestas").querySelector("tbody");
     tbody.innerHTML = "";
-    FRECUENCIAS_HZ.forEach((f, i) => {
+    estado.ensayos.forEach((ensayo) => {
       const tr = document.createElement("tr");
-      [String(f), textoRespuesta(estado.derecho[i]), textoRespuesta(estado.izquierdo[i])].forEach(
-        (t) => {
-          const td = document.createElement("td");
-          td.textContent = t;
-          tr.appendChild(td);
-        }
-      );
+      [
+        String(ensayo.frecuencia_hz),
+        textoLado(ensayo.lado_estimulo),
+        textoLado(ensayo.respuesta),
+      ].forEach((texto) => {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
       tbody.appendChild(tr);
     });
   }
@@ -349,9 +369,7 @@
           dispositivo_id: estado.dispositivoId,
           origen: origenDeLosDatos(),
           data: {
-            frecuencias_hz: FRECUENCIAS_HZ,
-            resultados_oido_derecho: estado.derecho,
-            resultados_oido_izquierdo: estado.izquierdo,
+            ensayos: estado.ensayos,
             nivel_senal: estado.nivelSenal,
             cuestionario: estado.formulario,
           },
@@ -382,13 +400,23 @@
       $("btn-comenzar").disabled = true;
       return;
     }
-    $("progreso-total").textContent = String(FRECUENCIAS_HZ.length * OIDOS.length);
+    $("progreso-total").textContent = String(FRECUENCIAS_HZ.length * 2);
     $("chk-problema").addEventListener("change", actualizarOpcionesProblema);
     $("chk-otro").addEventListener("change", actualizarCampoOtro);
     $("btn-continuar").addEventListener("click", continuarDesdeFormulario);
     $("btn-comenzar").addEventListener("click", comenzar);
-    $("btn-escuche").addEventListener("click", () => estado.resolver && estado.resolver(true));
-    $("btn-no-escuche").addEventListener("click", () => estado.resolver && estado.resolver(false));
+    $("btn-izquierdo").addEventListener(
+      "click",
+      () => estado.resolver && estado.resolver("IZQUIERDO")
+    );
+    $("btn-derecho").addEventListener(
+      "click",
+      () => estado.resolver && estado.resolver("DERECHO")
+    );
+    $("btn-no-escuche").addEventListener(
+      "click",
+      () => estado.resolver && estado.resolver("NO_ESCUCHE")
+    );
     $("btn-repetir").addEventListener("click", repetir);
     $("btn-confirmar").addEventListener("click", confirmar);
   });
