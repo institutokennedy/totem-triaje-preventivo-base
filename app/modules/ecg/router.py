@@ -1,9 +1,10 @@
 ﻿from pathlib import Path as FilePath
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
+from app.common.models import EpisodioAtencion
 from app.common.resultado_service import (
     consultar_resultados,
     guardar_resultado,
@@ -93,6 +94,9 @@ def recibir_resultado(
     entrada: EntradaECG,
     session: Session = Depends(get_session),
 ) -> RespuestaGuardado:
+    episodio = session.get(EpisodioAtencion, entrada.episodio_id)
+    if episodio is None:
+        raise HTTPException(status_code=404, detail="El episodio no existe")
     resultado_id = guardar_resultado(
         session=session,
         episodio_id=entrada.episodio_id,

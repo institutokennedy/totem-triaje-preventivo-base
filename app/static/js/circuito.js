@@ -70,7 +70,8 @@
 
     function updateSave() {
       saveButton.hidden = capture === null;
-      saveButton.disabled = busy || episode === null || device === null ||
+      saveButton.disabled = busy || episode === null ||
+        !Number.isSafeInteger(episode.id) || episode.id <= 0 || device === null ||
         capture === null || !retryAllowed || postConfirmed;
       verifyButton.hidden = !needsVerification || capture === null;
       verifyButton.disabled = busy;
@@ -130,6 +131,7 @@
         const records = await json(API + "/dispositivos", { headers: { Accept: "application/json" } });
         if (!Array.isArray(records)) throw new Error("La API de dispositivos devolvió un formato inválido.");
         device = records.find((item) =>
+          item.codigo === "001" &&
           item.tipo === "ECG" &&
           item.activo === true && item.estado === "DISPONIBLE" &&
           Number.isSafeInteger(item.id) && item.id > 0
@@ -305,7 +307,8 @@
         status(root.querySelector("#estado-guardado-prueba"), "Ya hay una solicitud de guardado en curso.");
         return;
       }
-      if (episode === null || device === null || capture === null || !retryAllowed || postConfirmed) {
+      if (episode === null || !Number.isSafeInteger(episode.id) || episode.id <= 0 ||
+          device === null || capture === null || !retryAllowed || postConfirmed) {
         const reason = episode === null ? "falta un episodio verificado" :
           device === null ? "falta un dispositivo ECG activo y disponible" :
           capture === null ? "falta generar la señal simulada" :

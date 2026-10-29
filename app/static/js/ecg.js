@@ -74,7 +74,8 @@
   }
 
   function updatePersistenceControls() {
-    const hasEpisode = episodioActivo !== null;
+    const hasEpisode = episodioActivo !== null &&
+      Number.isSafeInteger(episodioActivo.id) && episodioActivo.id > 0;
     const saveButton = app.querySelector("#guardar-resultado");
     const verifyButton = app.querySelector("#verificar-resultado");
     app.querySelector("#persistencia-panel").hidden = false;
@@ -130,14 +131,14 @@
       });
       if (!Array.isArray(devices)) throw new Error("La API de dispositivos devolvió un formato inválido.");
       dispositivoEcg = devices.find((device) =>
-        device.codigo === "ECG-001" &&
+        device.codigo === "001" &&
         device.tipo === "ECG" &&
         device.activo === true &&
         device.estado === "DISPONIBLE" &&
         Number.isSafeInteger(device.id) && device.id > 0
       ) ?? null;
       if (dispositivoEcg === null) {
-        throw new Error("No se encontró un dispositivo ECG-001 activo y disponible. No se puede guardar la captura.");
+        throw new Error("No se encontró el dispositivo ECG de código 001 activo y disponible. No se puede guardar la captura.");
       }
       app.querySelector("#dispositivo-persistencia").textContent =
         `Dispositivo verificado por la API: ${dispositivoEcg.codigo} (ID ${dispositivoEcg.id}).`;
@@ -165,24 +166,12 @@
     return response.resultados;
   }
 
-  function mostrarResultados(resultados) {
-    const list = app.querySelector("#resultados-guardados");
-    list.replaceChildren();
-    for (const result of resultados) {
-      const item = document.createElement("li");
-      item.textContent = `Resultado #${result.id}: ${result.data.muestras.length} muestras, ${result.data.frecuencia_muestreo_hz} Hz, ${result.data.unidad}.`;
-      list.append(item);
-    }
-    list.hidden = resultados.length === 0;
-  }
-
   async function verificarResultadoPendiente() {
     if (!episodioActivo || !capture || isSaving) return;
     isSaving = true;
     updatePersistenceControls();
     try {
       const results = await obtenerResultadosPersistidos();
-      mostrarResultados(results);
       const match = results.find((result) => sameCapture(result.data, capture));
       needsVerification = false;
       if (match) {
@@ -213,7 +202,6 @@
     updatePersistenceControls();
     try {
       const results = await obtenerResultadosPersistidos();
-      mostrarResultados(results);
       const match = results.find((result) => sameCapture(result.data, capture));
       needsVerification = false;
       if (match) {
@@ -232,7 +220,8 @@
   }
 
   async function guardarCaptura() {
-    if (!episodioActivo || !dispositivoEcg || !capture || isSaving || saveConfirmed || !canSubmitCapture) return;
+    if (!episodioActivo || !Number.isSafeInteger(episodioActivo.id) || episodioActivo.id <= 0 ||
+        !dispositivoEcg || !capture || isSaving || saveConfirmed || !canSubmitCapture) return;
     isSaving = true;
     app.querySelector("#estado-guardado").textContent = "Enviando las muestras simuladas a la API…";
     updatePersistenceControls();
@@ -295,15 +284,11 @@
   }
 
   function clearSignal() {
-    app.querySelector("#muestras-vistas").replaceChildren();
     app.querySelector("#trazo-senal").setAttribute("points", "");
-    app.querySelector("#cantidad-en-curso").textContent = "0";
     app.querySelector("#cantidad-final").textContent = "—";
     app.querySelector("#frecuencia-final").textContent = "—";
     app.querySelector("#unidad-final").textContent = "—";
     app.querySelector("#estado-guardado").textContent = "";
-    app.querySelector("#resultados-guardados").replaceChildren();
-    app.querySelector("#resultados-guardados").hidden = true;
     saveConfirmed = false;
     canSubmitCapture = true;
     needsVerification = false;
@@ -316,18 +301,14 @@
   }
 
   async function presentSamples(data) {
-    const list = app.querySelector("#muestras-vistas");
-    list.replaceChildren();
     const shown = [];
-    for (const sample of data.muestras) {
-      await delay(220);
+    const batchSize = 25;
+    for (let offset = 0; offset < data.muestras.length; offset += batchSize) {
+      await delay(20);
       if (stopRequested) break;
-      shown.push(sample);
-      const item = document.createElement("li");
-      item.className = "sample";
-      item.textContent = String(sample);
-      list.append(item);
-      app.querySelector("#cantidad-en-curso").textContent = String(shown.length);
+      for (const sample of data.muestras.slice(offset, offset + batchSize)) {
+        shown.push(sample);
+      }
       drawSignal(shown);
     }
     if (shown.length === 0) {
@@ -338,13 +319,13 @@
       muestras: shown,
       unidad: data.unidad,
     };
-    app.querySelector("#cantidad-final").textContent = String(shown.length);
+    app.querySelector("#cantidad-final").textContent = String(capture.muestras.length);
     app.querySelector("#frecuencia-final").textContent = `${capture.frecuencia_muestreo_hz} Hz`;
     app.querySelector("#unidad-final").textContent = capture.unidad;
     const state = app.querySelector("#estado-simulacion");
     state.textContent = stopRequested
-      ? `Simulación detenida. Se conservaron ${shown.length} muestra(s) ficticia(s).`
-      : `Simulación finalizada. Se presentaron ${shown.length} muestras ficticias.`;
+      ? "Simulación detenida. La curva parcial queda disponible para revisar o repetir."
+      : "Simulación finalizada. La curva está disponible para revisar o guardar.";
     app.querySelector("#detener-simulacion").hidden = true;
     updatePersistenceControls();
   }
@@ -380,7 +361,7 @@
         updatePersistenceControls();
       }
     } catch (error) {
-      app.querySelector("#estado-simulacion").textContent = "No se completó la simulación.";
+      app.querySelector("#estado-simulacion").textContent = "No se pudo cargar la señal ECG simulada. Intentá nuevamente.";
       reportError(error);
     } finally {
       isCapturing = false;

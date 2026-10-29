@@ -1,4 +1,5 @@
 ﻿import json
+import math
 import re
 from datetime import date
 
@@ -56,7 +57,6 @@ def ecg_references(test_engine, ecg_app):
         session.add(paciente)
         session.commit()
         session.refresh(paciente)
-
         episodio = EpisodioAtencion(
             paciente_id=paciente.id,
             tipo_circuito="COMPLETO",
@@ -97,6 +97,89 @@ def test_esquema_y_simulador_generan_datos_ecg_validos():
     }
     assert DatosECG.model_validate(datos).model_dump() == datos
     assert generar_datos_ecg() == datos
+    assert datos["frecuencia_muestreo_hz"] == 250
+    assert len(datos["muestras"]) == 2500
+    assert all(math.isfinite(muestra) for muestra in datos["muestras"])
+
+
+def _indices_picos_sinteticos(muestras):
+    return [
+        indice
+        for indice in range(1, len(muestras) - 1)
+        if muestras[indice] >= 0.8
+        and muestras[indice] >= muestras[indice - 1]
+        and muestras[indice] >= muestras[indice + 1]
+    ]
+
+
+def test_simulador_permite_configurar_frecuencia_y_duracion():
+    datos = generar_datos_ecg(frecuencia_cardiaca_bpm=60, duracion_segundos=5)
+    picos = _indices_picos_sinteticos(datos["muestras"])
+
+    assert len(datos["muestras"]) == 1250
+    assert DatosECG.model_validate(datos).frecuencia_muestreo_hz == 250
+    assert len(picos) >= 4
+    assert [right - left for left, right in zip(picos, picos[1:])] == [250] * (len(picos) - 1)
+
+
+def test_senal_muy_corta_solo_se_valida_como_formato_tecnico():
+    datos = generar_datos_ecg(duracion_segundos=0.004)
+
+    assert len(datos["muestras"]) == 1
+    assert DatosECG.model_validate(datos).muestras == datos["muestras"]
+
+
+def test_simulador_genera_intervalos_regulares_e_irregulares_reproducibles():
+    regular = generar_datos_ecg(ritmo="regular")
+    irregular = generar_datos_ecg(ritmo="irregular", semilla=17)
+    irregular_repetido = generar_datos_ecg(ritmo="irregular", semilla=17)
+    rr_regular = [
+        right - left
+        for left, right in zip(
+            _indices_picos_sinteticos(regular["muestras"]),
+            _indices_picos_sinteticos(regular["muestras"])[1:],
+        )
+    ]
+    picos_irregulares = _indices_picos_sinteticos(irregular["muestras"])
+    rr_irregular = [right - left for left, right in zip(picos_irregulares, picos_irregulares[1:])]
+
+    assert irregular == irregular_repetido
+    assert len(set(rr_regular)) == 1
+    assert len(set(rr_irregular)) > 1
+    assert max(rr_irregular) - min(rr_irregular) >= 20
+
+
+def test_simulador_admite_ruido_artefacto_y_onda_p_no_visible_solo_como_datos():
+    limpia = generar_datos_ecg()
+    ruidosa = generar_datos_ecg(ruido_amplitud=0.02, semilla=9)
+    artefacto = generar_datos_ecg(artefacto_sintetico=True)
+    sin_onda_p = generar_datos_ecg(onda_p_visible=False)
+
+    assert ruidosa == generar_datos_ecg(ruido_amplitud=0.02, semilla=9)
+    assert ruidosa["muestras"] != generar_datos_ecg(ruido_amplitud=0.02, semilla=10)["muestras"]
+    assert artefacto["muestras"] != limpia["muestras"]
+    assert sin_onda_p["muestras"] != limpia["muestras"]
+    for datos in (ruidosa, artefacto, sin_onda_p):
+        assert DatosECG.model_validate(datos)
+        assert all(math.isfinite(muestra) for muestra in datos["muestras"])
+
+
+@pytest.mark.parametrize(
+    "parametros",
+    [
+        {"frecuencia_cardiaca_bpm": 0},
+        {"frecuencia_cardiaca_bpm": 75.5},
+        {"duracion_segundos": 0},
+        {"duracion_segundos": float("nan")},
+        {"ritmo": "sinusoidal"},
+        {"ruido_amplitud": -0.1},
+        {"ruido_amplitud": float("inf")},
+        {"semilla": 1.5},
+    ],
+)
+def test_simulador_rechaza_parametros_invalidos(parametros):
+    with pytest.raises(ValueError):
+        generar_datos_ecg(**parametros)
 
 
 @pytest.mark.parametrize(
@@ -158,6 +241,15 @@ def test_entrada_ecg_rechaza_campos_obligatorios_ausentes(campo):
         EntradaECG.model_validate(entrada)
 
 
+def test_entrada_ecg_usa_solo_los_campos_del_contrato():
+    assert set(EntradaECG.model_fields) == {
+        "episodio_id",
+        "dispositivo_id",
+        "origen",
+        "data",
+    }
+
+
 def test_entrada_ecg_rechaza_origen_invalido():
     entrada = {
         "episodio_id": 1,
@@ -188,6 +280,20 @@ def test_guardar_resultado_valido(ecg_client, test_engine, ecg_references):
     assert resultado.episodio_id == ecg_references["episodio_id"]
     assert resultado.dispositivo_id == ecg_references["dispositivo_id"]
     assert json.loads(resultado.data_json) == entrada["data"]
+
+
+def test_post_episodio_inexistente_devuelve_404_sin_persistir(
+    ecg_client, ecg_references, test_engine
+):
+    entrada = _entrada_valida(ecg_references)
+    entrada["episodio_id"] = 999999
+
+    response = ecg_client.post(RUTA, json=entrada)
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "El episodio no existe"
+    with Session(test_engine) as session:
+        assert session.exec(select(ResultadoModulo)).all() == []
 
 
 def test_post_rechaza_entrada_invalida_con_422(ecg_client, ecg_references):
@@ -454,12 +560,12 @@ def test_app_principal_persiste_y_consulta_ecg_simulado(
 
     dispositivo_response = client.post(
         "/api/v1/dispositivos",
-        json={"codigo": "ECG-001", "nombre": "ECG de prueba", "tipo": "ECG"},
+        json={"codigo": "001", "nombre": "ECG de prueba", "tipo": "ECG"},
     )
     assert dispositivo_response.status_code == 201
     dispositivos = client.get("/api/v1/dispositivos")
     assert dispositivos.status_code == 200
-    dispositivo = next(item for item in dispositivos.json() if item["codigo"] == "ECG-001")
+    dispositivo = next(item for item in dispositivos.json() if item["codigo"] == "001")
     assert dispositivo["tipo"] == "ECG"
     assert dispositivo["activo"] is True
     assert dispositivo["estado"] == "DISPONIBLE"
@@ -513,7 +619,7 @@ def test_app_principal_no_persiste_resultado_con_referencia_inexistente(
     ).json()
     dispositivo = client.post(
         "/api/v1/dispositivos",
-        json={"codigo": "ECG-001", "nombre": "ECG de prueba", "tipo": "ECG"},
+        json={"codigo": "001", "nombre": "ECG de prueba", "tipo": "ECG"},
     ).json()
     entrada = {
         "episodio_id": episodio["id"],
@@ -540,7 +646,7 @@ def test_frontend_ecg_prepara_persistencia_con_contexto_real(ecg_client):
     assert "new URLSearchParams(window.location.search)" in response.text
     assert "${API}/episodios/${episodioId}" in response.text
     assert "${API}/dispositivos" in response.text
-    assert 'device.codigo === "ECG-001"' in response.text
+    assert 'device.codigo === "001"' in response.text
     assert 'device.tipo === "ECG"' in response.text
     assert "device.activo === true" in response.text
     assert 'origen: "SIMULADOR"' in response.text
@@ -550,6 +656,7 @@ def test_frontend_ecg_prepara_persistencia_con_contexto_real(ecg_client):
     assert '<button id="guardar-resultado" type="button" disabled>' in html
     assert 'saveButton.hidden = false' in response.text
     assert 'saveButton.disabled = !(hasEpisode && dispositivoEcg && capture' in response.text
+    assert "paciente_id" not in response.text
     assert "no se declara completado el flujo rojo HU-09" in response.text
     assert "Prueba técnica HU-14" in response.text
     assert "localStorage" not in response.text
@@ -564,7 +671,8 @@ def test_frontend_ecg_reconcilia_error_antes_de_habilitar_reintento(ecg_client):
     assert "const match = results.find((result) => sameCapture(result.data, capture))" in javascript
     assert "canSubmitCapture = false" in javascript
     assert "canSubmitCapture = true" in javascript
-    assert "if (!episodioActivo || !dispositivoEcg || !capture || isSaving || saveConfirmed || !canSubmitCapture) return" in javascript
+    assert "if (!episodioActivo || !Number.isSafeInteger(episodioActivo.id) || episodioActivo.id <= 0" in javascript
+    assert "paciente_id" not in javascript
 
 
 def test_herramienta_temporal_muestra_estado_y_requisitos_del_guardado(ecg_client):
@@ -578,7 +686,7 @@ def test_herramienta_temporal_muestra_estado_y_requisitos_del_guardado(ecg_clien
     assert 'item.estado === "DISPONIBLE"' in javascript
     assert 'item.activo === true' in javascript
     assert 'Number.isSafeInteger(item.id) && item.id > 0' in javascript
-    assert 'item.codigo === "ECG-001"' not in javascript
+    assert 'item.codigo === "001"' in javascript
     assert 'dispositivo_id: device.id' in javascript
     assert "No se encontró un dispositivo ECG activo y disponible" in javascript
     assert "falta un episodio verificado" in javascript
@@ -588,6 +696,7 @@ def test_herramienta_temporal_muestra_estado_y_requisitos_del_guardado(ecg_clien
     assert 'API + "/ecg/resultados"' in javascript
     assert 'API + "/ecg/resultados/" + episode.id' in javascript
     assert "Guardado confirmado y verificado por la API" in javascript
+    assert "paciente_id: episode.paciente_id" not in javascript
 
 
 def test_captura_simulada_reutiliza_esquema_ecg(ecg_client):
@@ -620,6 +729,14 @@ def test_pantalla_ecg_mantiene_la_secuencia_de_navegacion(ecg_client):
     assert 'id="paso-guardar"' not in html
     assert 'id="paciente-seleccionado"' not in html
     assert 'id="paso-siguiente"' in html
+    assert '<dl id="resumen-tecnico"' in html
+    assert 'id="cantidad-final"' in html
+    assert 'id="frecuencia-final"' in html
+    assert 'id="unidad-final"' in html
+    assert 'app.querySelector("#cantidad-final").textContent = String(capture.muestras.length)' in javascript
+    assert 'app.querySelector("#frecuencia-final").textContent = `${capture.frecuencia_muestreo_hz} Hz`' in javascript
+    assert 'app.querySelector("#unidad-final").textContent = capture.unidad' in javascript
+    assert "muestras: shown" in javascript
     assert "${API}/ecg/resultados" in javascript
     assert "origen: \"SIMULADOR\"" in javascript
     assert "localStorage" not in javascript

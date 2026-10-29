@@ -22,13 +22,12 @@
     .pad.yellow { border-color: #ca8a04; }
     .pad.green { border-color: #15803d; }
     .connection { border-left: 4px solid #64748b; padding: .6rem .8rem; margin: .5rem 0; }
-    .signal { width: 100%; max-width: 42rem; border: 1px solid #94a3b8; background: #f8fafc; }
+    .signal { display: block; width: 100%; max-width: 100%; height: auto; aspect-ratio: 640 / 180; border: 1px solid #94a3b8; background: #f8fafc; }
     button { margin: .5rem .5rem .5rem 0; padding: .65rem 1rem; cursor: pointer; }
     button:disabled { cursor: not-allowed; opacity: .55; }
     label { display: block; margin: .8rem 0; }
     select { display: block; box-sizing: border-box; max-width: 28rem; width: 100%; padding: .5rem; }
     [hidden] { display: none !important; }
-    li.sample { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -83,28 +82,23 @@
         <button id="repetir-ecg" type="button">Repetir ECG</button>
         <button id="finalizar-ecg" type="button">Finalizar</button>
       </section>
-      <dl>
-        <dt>Muestras presentadas</dt><dd id="cantidad-en-curso">0</dd>
-      </dl>
-      <svg id="grafico-senal" class="signal" viewBox="0 0 640 180" role="img" aria-labelledby="grafico-titulo grafico-descripcion">
+      <svg id="grafico-senal" class="signal" viewBox="0 0 640 180" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="grafico-titulo grafico-descripcion">
         <title id="grafico-titulo">Señal ECG simulada</title>
         <desc id="grafico-descripcion">La gráfica presenta las muestras ficticias recibidas, sin interpretación clínica.</desc>
         <path d="M 24 90 H 616" stroke="#cbd5e1" stroke-width="1" fill="none"></path>
         <polyline id="trazo-senal" points="" fill="none" stroke="#1d4ed8" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"></polyline>
       </svg>
-      <ol id="muestras-vistas" aria-label="Muestras simuladas"></ol>
     </section>
 
     <section id="paso-resumen" class="step-panel" aria-labelledby="resumen-titulo" hidden>
       <h2 id="resumen-titulo">4. Resumen de captura</h2>
       <p class="notice"><strong>Origen: SIMULACIÓN.</strong> Las muestras son ficticias. No se adquirieron señales de un dispositivo físico.</p>
-      <dl>
-        <dt>Cantidad de muestras</dt><dd id="cantidad-final">—</dd>
-        <dt>Frecuencia indicada por el simulador</dt><dd id="frecuencia-final">—</dd>
-        <dt>Unidad</dt><dd id="unidad-final">—</dd>
-        <dt>Adquisición física</dt><dd>No disponible ni verificada en esta integración.</dd>
+      <p>Esta curva es una simulación técnica. No representa una adquisición física ni produce una interpretación clínica.</p>
+      <dl id="resumen-tecnico" class="technical-summary">
+        <div><dt>Cantidad de muestras</dt><dd id="cantidad-final">—</dd></div>
+        <div><dt>Frecuencia de muestreo</dt><dd id="frecuencia-final">—</dd></div>
+        <div><dt>Unidad</dt><dd id="unidad-final">—</dd></div>
       </dl>
-      <p>La gráfica y las muestras son datos técnicos de demostración. No se interpretan ni producen diagnósticos.</p>
       <button id="repetir-simulacion" type="button">Repetir simulación</button>
       <section id="persistencia-panel" class="notice" aria-labelledby="persistencia-titulo">
         <h3 id="persistencia-titulo">Persistencia técnica de la simulación</h3>
@@ -113,7 +107,6 @@
         <button id="guardar-resultado" type="button" disabled>Guardar captura simulada</button>
         <button id="verificar-resultado" type="button" hidden>Consultar estado del guardado</button>
         <p id="estado-guardado" role="status" aria-live="polite"></p>
-        <ul id="resultados-guardados" hidden></ul>
       </section>
       <p id="sin-contexto-persistencia" class="notice">La señal simulada puede generarse sin paciente; persistirla requiere un episodio existente y un dispositivo ECG real del catálogo.</p>
       <button id="finalizar-simulacion" type="button">Finalizar sin guardar</button>
