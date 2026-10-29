@@ -1,10 +1,10 @@
 ﻿from pathlib import Path as FilePath
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
-from app.common.models import EpisodioAtencion
 from app.common.resultado_service import (
     consultar_resultados,
     guardar_resultado,
@@ -58,16 +58,6 @@ def pagina_circuito() -> FileResponse:
     )
 
 
-@router.get("/circuito/prueba", include_in_schema=False)
-def pagina_prueba_circuito() -> FileResponse:
-    """Sirve una herramienta temporal aislada para probar HU-03 y ECG."""
-    return FileResponse(
-        APP_DIR / "templates" / "modulos" / "circuito_prueba.html",
-        media_type="text/html",
-        headers={"Cache-Control": "no-store"},
-    )
-
-
 @router.get("/circuito/frontend.js", include_in_schema=False)
 def frontend_circuito() -> FileResponse:
     """Sirve el JavaScript de selección de circuito."""
@@ -83,7 +73,11 @@ def captura_simulada() -> dict[str, int | list[float] | str]:
     """Entrega las muestras técnicas ficticias del simulador ECG."""
     from app.modules.ecg.simulator import generar_datos_ecg
 
-    return DatosECG.model_validate(generar_datos_ecg()).model_dump()
+    data = {
+        **generar_datos_ecg(),
+        "adquisicion_id": str(uuid4()),
+    }
+    return DatosECG.model_validate(data).model_dump(mode="json")
 
 @router.post(
     "/resultados",
@@ -92,17 +86,43 @@ def captura_simulada() -> dict[str, int | list[float] | str]:
 )
 def recibir_resultado(
     entrada: EntradaECG,
+    response: Response,
     session: Session = Depends(get_session),
 ) -> RespuestaGuardado:
-    episodio = session.get(EpisodioAtencion, entrada.episodio_id)
-    if episodio is None:
-        raise HTTPException(status_code=404, detail="El episodio no existe")
+    data = entrada.data.model_dump(mode="json", exclude_none=True)
+    adquisicion_id = data.get("adquisicion_id")
+    if adquisicion_id is not None:
+        existing = consultar_resultados(
+            session=session,
+            episodio_id=entrada.episodio_id,
+            modulo=MODULO,
+        )
+        duplicate = next(
+            (
+                resultado
+                for resultado in existing
+                if resultado["data"].get("adquisicion_id") == adquisicion_id
+            ),
+            None,
+        )
+        if duplicate is not None:
+            if duplicate["data"] != data:
+                raise HTTPException(
+                    status_code=409,
+                    detail="adquisicion_id ya existe con datos diferentes",
+                )
+            response.status_code = 200
+            return {
+                "mensaje": "La adquisición ya estaba guardada",
+                "resultado_id": duplicate["id"],
+            }
+
     resultado_id = guardar_resultado(
         session=session,
         episodio_id=entrada.episodio_id,
         dispositivo_id=entrada.dispositivo_id,
         modulo=MODULO,
-        data=entrada.data.model_dump(),
+        data=data,
     )
 
     return {
@@ -114,6 +134,7 @@ def recibir_resultado(
 @router.get(
     "/resultados/{episodio_id}",
     response_model=RespuestaConsulta,
+    response_model_exclude_none=True,
 )
 def obtener_resultados(
     episodio_id: int = Path(gt=0),

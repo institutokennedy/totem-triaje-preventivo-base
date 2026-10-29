@@ -1,5 +1,6 @@
 import math
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, BeforeValidator, Field
 
@@ -34,6 +35,7 @@ class DatosECG(BaseModel):
     frecuencia_muestreo_hz: FrecuenciaMuestreoPositiva
     muestras: MuestrasECG
     unidad: Literal["mV", "ADC"]
+    adquisicion_id: UUID | None = None
 
 
 class EntradaECG(BaseModel):

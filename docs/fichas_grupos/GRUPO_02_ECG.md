@@ -90,7 +90,8 @@ GET  /api/v1/dispositivos/{dispositivo_id}
 
 Para las pruebas del módulo se recomienda registrar un dispositivo ficticio con:
 
-- `codigo`: `ECG-001`
+-`codigo`: `ECG-001`
+- `codigo`: `001` (código estable acordado para el dispositivo ECG del proyecto)
 - `tipo`: `ECG`
 - `nombre`: un nombre descriptivo elegido por el grupo.
 
@@ -158,6 +159,8 @@ El flujo común se consulta en `FRONTEND_BASE_Y_FLUJO.md`. La pantalla ECG debe:
 - permitir **Repetir** sin guardar;
 - permitir **Confirmar** y ejecutar el `POST`;
 - informar errores de dispositivo o API.
+
+Cada captura nueva del simulador tiene un `adquisicion_id` UUID propio. **Repetir** solicita una adquisición nueva sin crear paciente ni episodio y sin borrar resultados; **Confirmar** y sus reintentos conservan el mismo ID. El backend reconoce un reintento por `adquisicion_id` dentro del episodio, no por igualdad de muestras.
 
 Archivos sugeridos:
 

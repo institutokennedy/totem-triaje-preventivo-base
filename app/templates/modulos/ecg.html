@@ -37,6 +37,7 @@
     <section class="notice" aria-labelledby="contexto-integracion-titulo">
       <h2 id="contexto-integracion-titulo">Contexto del episodio pendiente</h2>
       <p id="episodio-contexto">No se recibió un episodio activo ni el contexto del circuito. La captura de esta página sigue siendo una demostración técnica y no se guarda.</p>
+      <p id="episodio-inicio">Inicio: pendiente de consultar el episodio.</p>
       <ul>
         <li><strong>HU-09 · Guardia:</strong> no se recibió una clasificación roja válida; esta pantalla no declara que el flujo HU-09 esté habilitado.</li>
         <li><strong>HU-14 · Completo:</strong> no se recibió un episodio del circuito completo. Este flujo no requiere clasificación roja.</li>
@@ -79,7 +80,7 @@
       <section id="interferencia-panel" class="notice" aria-labelledby="interferencia-titulo" hidden>
         <h3 id="interferencia-titulo">Se detectó una interferencia en la señal del ECG. ¿Desea repetir la captura?</h3>
         <p>La comprobación técnica detectó una señal sin variación entre muestras. Esto no es una evaluación clínica.</p>
-        <button id="repetir-ecg" type="button">Repetir ECG</button>
+        <button id="repetir-ecg" type="button">Repetir captura</button>
         <button id="finalizar-ecg" type="button">Finalizar</button>
       </section>
       <svg id="grafico-senal" class="signal" viewBox="0 0 640 180" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="grafico-titulo grafico-descripcion">
@@ -99,12 +100,12 @@
         <div><dt>Frecuencia de muestreo</dt><dd id="frecuencia-final">—</dd></div>
         <div><dt>Unidad</dt><dd id="unidad-final">—</dd></div>
       </dl>
-      <button id="repetir-simulacion" type="button">Repetir simulación</button>
+      <button id="repetir-simulacion" type="button">Repetir captura</button>
       <section id="persistencia-panel" class="notice" aria-labelledby="persistencia-titulo">
         <h3 id="persistencia-titulo">Persistencia técnica de la simulación</h3>
         <p id="episodio-persistencia">Sin episodio validado. Abrí esta pantalla desde un episodio real para habilitar el guardado.</p>
         <p id="dispositivo-persistencia">El dispositivo ECG se verificará al validar el episodio.</p>
-        <button id="guardar-resultado" type="button" disabled>Guardar captura simulada</button>
+        <button id="guardar-resultado" type="button" disabled>Confirmar</button>
         <button id="verificar-resultado" type="button" hidden>Consultar estado del guardado</button>
         <p id="estado-guardado" role="status" aria-live="polite"></p>
       </section>
@@ -130,5 +131,4 @@
   <script src="/api/v1/ecg/frontend.js" defer></script>
 </body>
 </html>
-
 
