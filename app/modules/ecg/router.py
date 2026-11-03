@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
+from app.common.models import Dispositivo, EpisodioAtencion
 from app.common.resultado_service import (
     consultar_resultados,
     guardar_resultado,
@@ -58,16 +59,6 @@ def pagina_circuito() -> FileResponse:
     )
 
 
-@router.get("/circuito/frontend.js", include_in_schema=False)
-def frontend_circuito() -> FileResponse:
-    """Sirve el JavaScript de selección de circuito."""
-    return FileResponse(
-        APP_DIR / "static" / "js" / "circuito.js",
-        media_type="application/javascript",
-        headers={"Cache-Control": "no-store"},
-    )
-
-
 @router.get("/simulador/captura")
 def captura_simulada() -> dict[str, int | list[float] | str]:
     """Entrega las muestras técnicas ficticias del simulador ECG."""
@@ -79,6 +70,7 @@ def captura_simulada() -> dict[str, int | list[float] | str]:
     }
     return DatosECG.model_validate(data).model_dump(mode="json")
 
+
 @router.post(
     "/resultados",
     response_model=RespuestaGuardado,
@@ -89,6 +81,36 @@ def recibir_resultado(
     response: Response,
     session: Session = Depends(get_session),
 ) -> RespuestaGuardado:
+    if entrada.origen == "SENSOR":
+        episodio = session.get(EpisodioAtencion, entrada.episodio_id)
+        if episodio is None:
+            raise HTTPException(
+                status_code=404,
+                detail="El episodio indicado no existe",
+            )
+        if episodio.estado != "INICIADO":
+            raise HTTPException(
+                status_code=409,
+                detail="La captura requiere un episodio en estado INICIADO",
+            )
+
+        dispositivo = session.get(Dispositivo, entrada.dispositivo_id)
+        if dispositivo is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No existe el dispositivo ECG indicado",
+            )
+        if dispositivo.codigo != "ECG-001" or dispositivo.tipo != "ECG":
+            raise HTTPException(
+                status_code=422,
+                detail="La captura del sensor requiere el dispositivo ECG de código ECG-001",
+            )
+        if not dispositivo.activo or dispositivo.estado != "DISPONIBLE":
+            raise HTTPException(
+                status_code=409,
+                detail="El dispositivo ECG-001 no está activo y disponible",
+            )
+
     data = entrada.data.model_dump(mode="json", exclude_none=True)
     adquisicion_id = data.get("adquisicion_id")
     if adquisicion_id is not None:

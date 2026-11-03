@@ -1,7 +1,8 @@
-﻿(() => {
+(() => {
   "use strict";
 
   const API = "/api/v1";
+  const MUESTRAS_CAPTURA = 2500;
   const app = document.getElementById("ecg-app");
   const stepPanels = [
     "#paso-preparacion",
@@ -12,25 +13,21 @@
   const stepNames = [
     "Limpieza de la piel",
     "Colocación de electrodos",
-    "Generación del ECG simulado",
+    "Adquisición ECG",
     "Resumen de captura",
   ];
   const navItems = [...app.querySelectorAll(".steps li")];
   let currentStep = 0;
-  let capture = null;
-  let isCapturing = false;
-  let stopRequested = false;
-  let flowFinalized = false;
   let episodioActivo = null;
   let dispositivoEcg = null;
-  let isSaving = false;
-  let saveConfirmed = false;
-  let canSubmitCapture = true;
-  let needsVerification = false;
-  let savedResultId = null;
+  let capturaActual = null;
+  let sensorCapturesById = new Map();
+  let isCapturing = false;
+  let pollingGeneration = 0;
+  let pollingTimer = null;
+  let acquisitionId = null;
 
   function showStep(index, preserveError = false) {
-    if (flowFinalized) return;
     currentStep = index;
     app.dataset.step = String(index);
     stepPanels.forEach((panel, panelIndex) => { panel.hidden = panelIndex !== index; });
@@ -38,16 +35,21 @@
       if (itemIndex === index) item.setAttribute("aria-current", "step");
       else item.removeAttribute("aria-current");
     });
-    app.querySelector("#paso-actual").textContent = `Paso ${index + 1} de ${stepPanels.length}: ${stepNames[index]}`;
+    app.querySelector("#paso-actual").textContent =
+      `Paso ${index + 1} de ${stepPanels.length}: ${stepNames[index]}`;
     app.querySelector("#paso-anterior").disabled = index === 0 || isCapturing;
     const next = app.querySelector("#paso-siguiente");
     next.hidden = index === stepPanels.length - 1;
-    next.disabled = isCapturing || (index === 1 && !app.querySelector("#aceptar-referencia-electrodos").checked) || (index === 2 && capture === null);
+    next.disabled = isCapturing ||
+      (index === 1 && !app.querySelector("#aceptar-referencia-electrodos").checked) ||
+      (index === 2 && capturaActual === null);
     if (!preserveError) app.querySelector("#error").hidden = true;
   }
 
   function reportError(error) {
-    const message = error instanceof Error ? error.message : "Ocurrió un error técnico inesperado.";
+    const message = error instanceof Error
+      ? error.message
+      : "Ocurrió un error técnico inesperado.";
     app.querySelector("#mensaje-error").textContent = message;
     app.querySelector("#error").hidden = false;
   }
@@ -75,7 +77,7 @@
     }).format(date);
   }
 
-  async function requestJson(url, options) {
+  async function requestJson(url, options = {}) {
     const response = await fetch(url, options);
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -85,106 +87,159 @@
     return body;
   }
 
-  function sameAcquisition(left, right) {
-    return Boolean(
-      left && right &&
-      typeof left.adquisicion_id === "string" &&
-      left.adquisicion_id === right.adquisicion_id
-    );
+  function setStatus(message) {
+    app.querySelector("#estado-fisico").textContent = message;
   }
 
-  function updatePersistenceControls() {
-    const hasEpisode = episodioActivo !== null &&
-      Number.isSafeInteger(episodioActivo.id) && episodioActivo.id > 0;
-    const saveButton = app.querySelector("#guardar-resultado");
-    const verifyButton = app.querySelector("#verificar-resultado");
-    const captureChangesBlocked = isCapturing || isSaving || needsVerification;
-    app.querySelector("#persistencia-panel").hidden = false;
-    app.querySelector("#sin-contexto-persistencia").hidden = hasEpisode;
-    saveButton.hidden = false;
-    saveButton.disabled = !(hasEpisode && dispositivoEcg && capture && canSubmitCapture && !saveConfirmed && !isSaving);
-    verifyButton.hidden = !(hasEpisode && capture && needsVerification);
-    verifyButton.disabled = isSaving;
-    app.querySelector("#iniciar-simulacion").disabled = captureChangesBlocked;
-    app.querySelector("#repetir-simulacion").disabled = captureChangesBlocked;
-    app.querySelector("#repetir-ecg").disabled = captureChangesBlocked;
+  function updateStartButton() {
+    const ready = episodioActivo?.estado === "INICIADO" &&
+      Number.isSafeInteger(episodioActivo.id) && episodioActivo.id > 0 &&
+      dispositivoEcg !== null &&
+      app.querySelector("#esp32-url").value.trim().length > 0;
+    app.querySelector("#iniciar-ecg").disabled = !ready || isCapturing;
   }
 
   async function loadEpisodeContext() {
     const rawId = new URLSearchParams(window.location.search).get("episodio_id");
     if (rawId === null) {
-      app.querySelector("#episodio-contexto").textContent = "No se recibió un episodio activo. La señal puede simularse, pero el guardado queda deshabilitado.";
-      app.querySelector("#episodio-persistencia").textContent = "Sin episodio validado. Abrí esta pantalla desde el episodio real para habilitar el guardado.";
-      app.querySelector("#dispositivo-persistencia").textContent = "No se buscará dispositivo hasta validar un episodio.";
-      app.querySelector("#estado-guardado").textContent = "Guardado no disponible: falta un episodio real.";
-      updatePersistenceControls();
+      app.querySelector("#episodio-contexto").textContent =
+        "No se recibió un episodio activo. Abrí esta pantalla desde un episodio real para iniciar la adquisición.";
+      app.querySelector("#episodio-persistencia").textContent =
+        "Sin episodio validado. La adquisición y el guardado requieren un episodio real.";
+      app.querySelector("#dispositivo-persistencia").textContent =
+        "No se buscará el dispositivo hasta validar un episodio.";
+      setStatus("Error: falta un episodio válido.");
+      updateStartButton();
       return;
     }
     const episodioId = Number(rawId);
     if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(episodioId)) {
-      app.querySelector("#episodio-contexto").textContent = "El episodio_id de la URL no es un identificador positivo válido; no se habilitó el guardado.";
+      app.querySelector("#episodio-contexto").textContent =
+        "El episodio_id de la URL no es un identificador positivo válido.";
+      setStatus("Error: el episodio no es válido.");
       reportError(new Error("episodio_id inválido."));
-      app.querySelector("#estado-guardado").textContent = "Guardado no disponible: el episodio_id no es válido.";
-      updatePersistenceControls();
+      updateStartButton();
       return;
     }
 
-    const contextMessage = app.querySelector("#episodio-contexto");
-    const persistenceMessage = app.querySelector("#episodio-persistencia");
-    contextMessage.textContent = `Verificando el episodio de prueba ${episodioId}…`;
-    app.querySelector("#persistencia-panel").hidden = false;
-    app.querySelector("#sin-contexto-persistencia").hidden = true;
-    persistenceMessage.textContent = `Episodio de prueba #${episodioId}: verificando circuito en la API.`;
+    app.querySelector("#episodio-contexto").textContent =
+      `Verificando el episodio #${episodioId}…`;
+    app.querySelector("#episodio-persistencia").textContent =
+      `Episodio #${episodioId}: verificando estado en la API.`;
     try {
       const episode = await requestJson(`${API}/episodios/${episodioId}`, {
         headers: { Accept: "application/json" },
       });
-      if (episode.id !== episodioId || !["GUARDIA", "COMPLETO"].includes(episode.tipo_circuito)) {
+      if (
+        episode.id !== episodioId ||
+        !["GUARDIA", "COMPLETO"].includes(episode.tipo_circuito)
+      ) {
         throw new Error("La API no devolvió un episodio válido de GUARDIA o COMPLETO.");
       }
       episodioActivo = episode;
-      if (episode.tipo_circuito === "GUARDIA") {
-        contextMessage.textContent = `Episodio #${episode.id}, circuito GUARDIA. Modo de prueba técnica; no se recibió clasificación roja y no se declara completado el flujo rojo HU-09.`;
-      } else {
-        contextMessage.textContent = `Episodio #${episode.id}, circuito COMPLETO. Prueba técnica HU-14; no requiere clasificación roja.`;
-      }
-      persistenceMessage.textContent = `Episodio #${episode.id} · ${episode.tipo_circuito} · estado ${episode.estado}.`;
+      app.querySelector("#episodio-contexto").textContent =
+        `Episodio #${episode.id} · ${episode.tipo_circuito} · estado ${episode.estado}.`;
       app.querySelector("#episodio-inicio").textContent =
         `Inicio: ${formatEpisodeDate(episode.iniciado_en)}`;
+      app.querySelector("#episodio-persistencia").textContent =
+        `Episodio #${episode.id} · ${episode.tipo_circuito} · estado ${episode.estado}.`;
 
       const devices = await requestJson(`${API}/dispositivos`, {
         headers: { Accept: "application/json" },
       });
-      if (!Array.isArray(devices)) throw new Error("La API de dispositivos devolvió un formato inválido.");
+      if (!Array.isArray(devices)) {
+        throw new Error("La API de dispositivos devolvió un formato inválido.");
+      }
       dispositivoEcg = devices.find((device) =>
-        device.codigo === "001" &&
+        device.codigo === "ECG-001" &&
         device.tipo === "ECG" &&
         device.activo === true &&
         device.estado === "DISPONIBLE" &&
         Number.isSafeInteger(device.id) && device.id > 0
       ) ?? null;
       if (dispositivoEcg === null) {
-        throw new Error("No se encontró el dispositivo ECG de código 001 activo y disponible. No se puede guardar la captura.");
+        throw new Error(
+          "No se encontró el dispositivo ECG-001 activo y disponible."
+        );
       }
       app.querySelector("#dispositivo-persistencia").textContent =
         `Dispositivo verificado por la API: ${dispositivoEcg.codigo} (ID ${dispositivoEcg.id}).`;
+      try {
+        await cargarHistorial();
+      } catch (error) {
+        app.querySelector("#estado-guardado").textContent =
+          `No se pudo cargar el historial ECG: ${error.message}`;
+        reportError(error);
+      }
+      if (episode.estado !== "INICIADO") {
+        setStatus("Error: el episodio debe estar INICIADO para adquirir ECG.");
+      } else {
+        setStatus("Listo para iniciar.");
+      }
     } catch (error) {
       dispositivoEcg = null;
-      const detail = error instanceof Error ? error.message : "No se pudo verificar el episodio o el dispositivo.";
+      const detail = error instanceof Error
+        ? error.message
+        : "No se pudo verificar el episodio o el dispositivo.";
       app.querySelector("#dispositivo-persistencia").textContent = detail;
-      app.querySelector("#estado-guardado").textContent = "No se puede guardar la captura: " + detail;
+      setStatus(`Error de comunicación o contexto: ${detail}`);
       reportError(error);
     } finally {
-      updatePersistenceControls();
+      updateStartButton();
     }
   }
 
-  async function obtenerResultadosPersistidos() {
-    const response = await requestJson(`${API}/ecg/resultados/${episodioActivo.id}`, {
+  function deviceBaseUrl() {
+    const raw = app.querySelector("#esp32-url").value.trim();
+    if (!raw) throw new Error("Ingresá la dirección del ESP32.");
+    const value = /^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+    const url = new URL(value);
+    if (
+      url.protocol !== "http:" || url.username || url.password ||
+      (url.pathname !== "/" && url.pathname !== "") || url.search || url.hash
+    ) {
+      throw new Error("Ingresá solo la dirección HTTP local del ESP32, sin rutas.");
+    }
+    return url.origin;
+  }
+
+  async function requestDeviceJson(baseUrl, path, options = {}) {
+    return requestJson(`${baseUrl}${path}`, {
+      ...options,
+      mode: "cors",
+      cache: "no-store",
+    });
+  }
+
+  async function readDeviceState(baseUrl) {
+    const state = await requestDeviceJson(baseUrl, "/api/ecg", {
       headers: { Accept: "application/json" },
     });
     if (
-      response.episodio_id !== episodioActivo.id || response.modulo !== "ecg" ||
+      !Array.isArray(state.muestras) ||
+      !Number.isInteger(state.cantidad_muestras) ||
+      state.cantidad_muestras < 0 ||
+      state.cantidad_muestras > MUESTRAS_CAPTURA ||
+      state.muestras.length !== state.cantidad_muestras ||
+      !state.muestras.every((sample) =>
+        Number.isInteger(sample) && sample >= 0 && sample <= 4095
+      ) ||
+      state.frecuencia_muestreo_hz !== 250 ||
+      state.unidad !== "ADC"
+    ) {
+      throw new Error("El ESP32 devolvió un estado ECG incompatible.");
+    }
+    return state;
+  }
+
+  async function obtenerResultadosPersistidos() {
+    const response = await requestJson(
+      `${API}/ecg/resultados/${episodioActivo.id}`,
+      { headers: { Accept: "application/json" } }
+    );
+    if (
+      response.episodio_id !== episodioActivo.id ||
+      response.modulo !== "ecg" ||
       !Array.isArray(response.resultados)
     ) {
       throw new Error("La consulta devolvió resultados incompatibles con el episodio ECG.");
@@ -192,301 +247,326 @@
     return response.resultados;
   }
 
-  async function verificarResultadoPendiente() {
-    if (!episodioActivo || !capture || isSaving) return;
-    isSaving = true;
-    updatePersistenceControls();
-    try {
-      const results = await obtenerResultadosPersistidos();
-      const match = results.find((result) => sameAcquisition(result.data, capture));
-      if (saveConfirmed) {
-        const confirmedResult = results.find((result) =>
-          result.id === savedResultId && sameAcquisition(result.data, capture)
-        );
-        if (confirmedResult) {
-          needsVerification = false;
-          app.querySelector("#error").hidden = true;
-          app.querySelector("#estado-guardado").textContent =
-            `La API confirmó y la consulta verificó el guardado del resultado #${savedResultId}. Origen: SIMULADOR.`;
-        } else {
-          needsVerification = true;
-          canSubmitCapture = false;
-          app.querySelector("#estado-guardado").textContent =
-            `La API confirmó el resultado #${savedResultId}, pero todavía no apareció en la consulta. No vuelvas a enviarlo.`;
-        }
-      } else if (match) {
-        needsVerification = false;
-        canSubmitCapture = false;
-        app.querySelector("#estado-guardado").textContent =
-          `La consulta encontró la adquisición #${match.id}. No se reenvió el POST para evitar un duplicado.`;
-      } else {
-        needsVerification = false;
-        canSubmitCapture = true;
-        app.querySelector("#estado-guardado").textContent =
-          "La consulta no encontró un resultado con estas muestras para el episodio. Podés reintentar el guardado.";
-      }
-    } catch (error) {
-      needsVerification = true;
-      canSubmitCapture = false;
-      app.querySelector("#estado-guardado").textContent =
-        `No se pudo verificar el estado en la API. Para evitar duplicados, el reenvío sigue bloqueado: ${error instanceof Error ? error.message : "error de consulta"}`;
-      reportError(error);
-    } finally {
-      isSaving = false;
-      updatePersistenceControls();
+  function capturaSensorValida(result) {
+    const data = result?.data;
+    return Number.isSafeInteger(result?.id) && result.id > 0 &&
+      data?.frecuencia_muestreo_hz === 250 &&
+      data?.unidad === "ADC" &&
+      typeof data.adquisicion_id === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.adquisicion_id) &&
+      Array.isArray(data.muestras) && data.muestras.length === MUESTRAS_CAPTURA &&
+      data.muestras.every((sample) =>
+        Number.isInteger(sample) && sample >= 0 && sample <= 4095
+      );
+  }
+
+  function actualizarListaCapturasFisicas() {
+    const selector = app.querySelector("#capturas-historicas");
+    const capturas = [...sensorCapturesById.values()]
+      .sort((left, right) => right.id - left.id);
+    const options = capturas.map((result) => {
+      const option = document.createElement("option");
+      option.value = String(result.id);
+      option.textContent =
+        `Resultado #${result.id} · ${result.data.muestras.length} muestras · ${result.data.frecuencia_muestreo_hz} Hz`;
+      return option;
+    });
+    selector.replaceChildren(...options);
+    selector.hidden = capturas.length === 0;
+  }
+
+  function drawSignal(samples, frequency, unit) {
+    const trace = app.querySelector("#trazo-senal");
+    if (samples.length === 0) {
+      trace.setAttribute("points", "");
+      return;
     }
-  }
 
-  async function reconcileUnconfirmedSave(error) {
-    const postError = error instanceof Error ? error.message : "error de API o red";
-    canSubmitCapture = false;
-    needsVerification = true;
-    app.querySelector("#estado-guardado").textContent =
-      `El POST falló o no recibió confirmación: ${postError} Consultando antes de permitir un reintento…`;
-    reportError(error);
-    updatePersistenceControls();
-    try {
-      const results = await obtenerResultadosPersistidos();
-      const match = results.find((result) => sameAcquisition(result.data, capture));
-      needsVerification = false;
-      if (match) {
-        canSubmitCapture = false;
-        app.querySelector("#estado-guardado").textContent =
-          `El POST falló o no recibió confirmación: ${postError} La consulta encontró la adquisición como resultado #${match.id}; no se reenvió para evitar un duplicado.`;
-      } else {
-        canSubmitCapture = true;
-        app.querySelector("#estado-guardado").textContent =
-          `El POST falló: ${postError} La consulta no encontró estas muestras para el episodio; podés reintentar.`;
-      }
-    } catch (queryError) {
-      needsVerification = true;
-      canSubmitCapture = false;
-      app.querySelector("#estado-guardado").textContent =
-        `El POST falló o no recibió confirmación: ${postError} Además, no se pudo consultar el estado (${queryError instanceof Error ? queryError.message : "error de consulta"}). Verificá antes de reintentar.`;
-      reportError(queryError);
-    }
-  }
-
-  async function guardarCaptura() {
-    if (!episodioActivo || !Number.isSafeInteger(episodioActivo.id) || episodioActivo.id <= 0 ||
-        !dispositivoEcg || !capture || isSaving || needsVerification || saveConfirmed || !canSubmitCapture) return;
-    isSaving = true;
-    app.querySelector("#estado-guardado").textContent = "Comprobando que esta adquisición no esté guardada antes de confirmarla…";
-    updatePersistenceControls();
-    try {
-      let existing;
-      try {
-        existing = await obtenerResultadosPersistidos();
-      } catch (error) {
-        app.querySelector("#estado-guardado").textContent =
-          `No se envió el POST porque no se pudo comprobar si la captura ya existe: ${error instanceof Error ? error.message : "error de consulta"}`;
-        reportError(error);
-        return;
-      }
-
-      const duplicate = existing.find((result) => sameAcquisition(result.data, capture));
-      if (duplicate) {
-        canSubmitCapture = false;
-        app.querySelector("#error").hidden = true;
-        app.querySelector("#estado-guardado").textContent =
-          `Esta adquisición ya existe como resultado #${duplicate.id}. No se creó un duplicado.`;
-        return;
-      }
-
-      let saved;
-      try {
-        saved = await requestJson(`${API}/ecg/resultados`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({
-            episodio_id: episodioActivo.id,
-            dispositivo_id: dispositivoEcg.id,
-            origen: "SIMULADOR",
-            data: capture,
-          }),
-        });
-        if (!Number.isSafeInteger(saved.resultado_id) || saved.resultado_id <= 0) {
-          throw new Error("La respuesta del POST no incluyó un resultado_id válido.");
-        }
-      } catch (error) {
-        await reconcileUnconfirmedSave(error);
-        return;
-      }
-
-      saveConfirmed = true;
-      savedResultId = saved.resultado_id;
-      canSubmitCapture = false;
-      needsVerification = true;
-      app.querySelector("#estado-guardado").textContent =
-        `La API confirmó el guardado del resultado #${savedResultId}. Verificando mediante la consulta del episodio…`;
-      updatePersistenceControls();
-      try {
-        const results = await obtenerResultadosPersistidos();
-        if (results.some((result) => result.id === savedResultId && sameAcquisition(result.data, capture))) {
-          needsVerification = false;
-          app.querySelector("#error").hidden = true;
-          app.querySelector("#estado-guardado").textContent =
-            `La API confirmó y la consulta verificó el guardado del resultado #${savedResultId}. Origen: SIMULADOR.`;
-        } else {
-          app.querySelector("#estado-guardado").textContent =
-            `La API confirmó el resultado #${savedResultId}, pero todavía no apareció en la consulta. No vuelvas a enviarlo.`;
-        }
-      } catch (queryError) {
-        reportError(queryError);
-        app.querySelector("#estado-guardado").textContent =
-          `La API confirmó el resultado #${savedResultId}, pero falló la consulta de verificación: ${queryError instanceof Error ? queryError.message : "error de consulta"}. No vuelvas a enviarlo.`;
-      }
-    } catch (error) {
-      reportError(error);
-      app.querySelector("#estado-guardado").textContent =
-        `No se pudo completar la confirmación: ${error instanceof Error ? error.message : "error inesperado"}`;
-    } finally {
-      isSaving = false;
-      updatePersistenceControls();
-    }
-  }
-
-  function delay(milliseconds) {
-    return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-  }
-
-  function drawSignal(samples) {
-    const maxMagnitude = Math.max(...samples.map((sample) => Math.abs(sample)), 1);
+    const minimum = Math.min(...samples);
+    const maximum = Math.max(...samples);
+    const range = maximum - minimum || 1;
     const points = samples.map((sample, index) => {
-      const x = 28 + index * (584 / Math.max(samples.length - 1, 1));
-      const y = 90 - (sample / maxMagnitude) * 68;
+      const x = 72 + index * (548 / Math.max(samples.length - 1, 1));
+      const y = 160 - ((sample - minimum) / range) * 140;
       return `${x},${y}`;
     });
-    app.querySelector("#trazo-senal").setAttribute("points", points.join(" "));
+    trace.setAttribute("points", points.join(" "));
+    app.querySelector("#amplitud-maxima").textContent = String(maximum);
+    app.querySelector("#amplitud-centro-escala").textContent =
+      String((minimum + maximum) / 2);
+    app.querySelector("#amplitud-minima").textContent = String(minimum);
+    const duration = (samples.length - 1) / frequency;
+    app.querySelector("#tiempo-medio").textContent = `${(duration / 2).toFixed(3)} s`;
+    app.querySelector("#tiempo-total").textContent = `${duration.toFixed(3)} s`;
+    app.querySelector("#unidad-eje").textContent = `Amplitud (${unit})`;
   }
 
   function clearSignal() {
-    app.querySelector("#trazo-senal").setAttribute("points", "");
+    drawSignal([], 250, "ADC");
+    app.querySelector("#amplitud-maxima").textContent = "—";
+    app.querySelector("#amplitud-centro-escala").textContent = "—";
+    app.querySelector("#amplitud-minima").textContent = "—";
+    app.querySelector("#tiempo-medio").textContent = "— s";
+    app.querySelector("#tiempo-total").textContent = "— s";
+    app.querySelector("#unidad-eje").textContent = "Amplitud —";
     app.querySelector("#cantidad-final").textContent = "—";
     app.querySelector("#frecuencia-final").textContent = "—";
     app.querySelector("#unidad-final").textContent = "—";
-    app.querySelector("#estado-guardado").textContent = "";
-    saveConfirmed = false;
-    canSubmitCapture = true;
-    needsVerification = false;
-    savedResultId = null;
-    updatePersistenceControls();
   }
 
-  function hasTechnicalInterference(samples) {
-    return samples.length > 1 && samples.every((sample) => sample === samples[0]);
-  }
-
-  async function presentSamples(data) {
-    const shown = [];
-    const batchSize = 25;
-    for (let offset = 0; offset < data.muestras.length; offset += batchSize) {
-      await delay(20);
-      if (stopRequested) break;
-      for (const sample of data.muestras.slice(offset, offset + batchSize)) {
-        shown.push(sample);
-      }
-      drawSignal(shown);
+  function actualizarCapturaGuardada(result, isNewCapture = false) {
+    if (!capturaSensorValida(result)) {
+      throw new Error("La API devolvió una captura física que no cumple el contrato ECG.");
     }
-    if (shown.length === 0) {
-      throw new Error("La simulación se detuvo antes de presentar una muestra. Iniciá una nueva simulación.");
-    }
-    capture = {
+    const data = result.data;
+    capturaActual = {
       adquisicion_id: data.adquisicion_id,
       frecuencia_muestreo_hz: data.frecuencia_muestreo_hz,
-      muestras: shown,
+      muestras: [...data.muestras],
       unidad: data.unidad,
     };
-    app.querySelector("#cantidad-final").textContent = String(capture.muestras.length);
-    app.querySelector("#frecuencia-final").textContent = `${capture.frecuencia_muestreo_hz} Hz`;
-    app.querySelector("#unidad-final").textContent = capture.unidad;
-    const state = app.querySelector("#estado-simulacion");
-    state.textContent = stopRequested
-      ? "Simulación detenida. La curva parcial queda disponible para revisar o repetir."
-      : "Simulación finalizada. La curva está disponible para revisar o guardar.";
-    app.querySelector("#detener-simulacion").hidden = true;
-    updatePersistenceControls();
+    drawSignal(capturaActual.muestras, capturaActual.frecuencia_muestreo_hz, capturaActual.unidad);
+    app.querySelector("#cantidad-final").textContent = String(capturaActual.muestras.length);
+    app.querySelector("#frecuencia-final").textContent =
+      `${capturaActual.frecuencia_muestreo_hz} Hz`;
+    app.querySelector("#unidad-final").textContent = capturaActual.unidad;
+    app.querySelector("#origen-resumen").textContent =
+      `Origen: SENSOR · ESP32 ${dispositivoEcg?.codigo ?? "ECG-001"} · resultado #${result.id}.`;
+    app.querySelector("#descripcion-resumen").textContent =
+      "Captura ADC original recibida y guardada por la API. Sin filtros ni identificación automática de ondas.";
+    app.querySelector("#capturas-historicas").value = String(result.id);
+    app.querySelector("#estado-guardado").textContent =
+      `Resultado guardado: la API confirmó la captura #${result.id}.`;
+    setStatus(isNewCapture
+      ? `Resultado guardado por la API · captura #${result.id}.`
+      : `Captura histórica #${result.id}.`);
+    updateStartButton();
+    showStep(currentStep, true);
   }
 
-  async function startSimulation() {
-    if (isCapturing || isSaving || needsVerification || flowFinalized) return;
-    capture = null;
-    stopRequested = false;
-    app.querySelector("#interferencia-panel").hidden = true;
-    clearSignal();
-    isCapturing = true;
-    app.querySelector("#iniciar-simulacion").disabled = true;
-    app.querySelector("#detener-simulacion").hidden = false;
-    app.querySelector("#estado-simulacion").textContent = "Solicitando lote de muestras ficticias al simulador Python…";
-    showStep(currentStep);
-    try {
-      const data = await requestJson(`${API}/ecg/simulador/captura`, {
-        headers: { Accept: "application/json" },
-      });
-      if (
-        !Number.isInteger(data.frecuencia_muestreo_hz) || data.frecuencia_muestreo_hz <= 0 ||
-        typeof data.adquisicion_id !== "string" ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.adquisicion_id) ||
-        !Array.isArray(data.muestras) || data.muestras.length === 0 ||
-        !data.muestras.every((sample) => typeof sample === "number" && Number.isFinite(sample)) ||
-        !["mV", "ADC"].includes(data.unidad)
-      ) {
-        throw new Error("La respuesta del simulador no cumple el esquema técnico de datos ECG.");
+  async function cargarHistorial() {
+    const results = await obtenerResultadosPersistidos();
+    for (const result of results) {
+      if (result?.data?.unidad === "ADC" && capturaSensorValida(result)) {
+        sensorCapturesById.set(result.id, result);
       }
-      await presentSamples(data);
-      if (hasTechnicalInterference(capture.muestras)) {
-        capture = null;
-        app.querySelector("#estado-simulacion").textContent = "La señal presenta una condición técnica para repetir o finalizar; no se conserva en el resumen.";
-        app.querySelector("#interferencia-panel").hidden = false;
-        updatePersistenceControls();
-      }
-    } catch (error) {
-      app.querySelector("#estado-simulacion").textContent = "No se pudo cargar la señal ECG simulada. Intentá nuevamente.";
-      reportError(error);
-    } finally {
-      isCapturing = false;
-      app.querySelector("#iniciar-simulacion").disabled = false;
-      app.querySelector("#detener-simulacion").hidden = true;
-      showStep(currentStep, true);
-      updatePersistenceControls();
+    }
+    actualizarListaCapturasFisicas();
+    return results;
+  }
+
+  function updateLiveSignal(state) {
+    const samples = state.muestras;
+    if (samples.length > 0) {
+      drawSignal(samples, state.frecuencia_muestreo_hz, state.unidad || "ADC");
+      app.querySelector("#cantidad-final").textContent = String(samples.length);
+      app.querySelector("#frecuencia-final").textContent =
+        `${state.frecuencia_muestreo_hz} Hz`;
+      app.querySelector("#unidad-final").textContent = state.unidad || "ADC";
+    } else if (state.captura_abortada || state.adquisicion_id === "") {
+      clearSignal();
     }
   }
 
-  function finishCaptureFlow() {
-    flowFinalized = true;
-    stepPanels.forEach((panel) => { panel.hidden = true; });
-    app.querySelector(".steps").hidden = true;
-    app.querySelector("#captura-finalizada").hidden = false;
-    app.querySelector("#paso-actual").textContent = "Captura finalizada";
-    app.querySelector("nav").hidden = true;
+  function stopPolling() {
+    pollingGeneration += 1;
+    if (pollingTimer !== null) {
+      window.clearTimeout(pollingTimer);
+      pollingTimer = null;
+    }
+    isCapturing = false;
+    updateStartButton();
+  }
+
+  function finishWithError(message, error = null) {
+    stopPolling();
+    setStatus(`Error de comunicación o adquisición: ${message}`);
+    app.querySelector("#estado-guardado").textContent =
+      "No se confirmó un resultado guardado.";
+    if (error) reportError(error);
+    updateStartButton();
+  }
+
+  async function pollAcquisition(baseUrl, generation) {
+    if (generation !== pollingGeneration || !isCapturing) return;
+    try {
+      const state = await readDeviceState(baseUrl);
+      if (generation !== pollingGeneration) return;
+      if (state.episodio_id !== episodioActivo.id) {
+        throw new Error("El ESP32 está configurado con otro episodio.");
+      }
+      if (state.adquisicion_id) acquisitionId = state.adquisicion_id;
+      updateLiveSignal(state);
+
+      if (!state.electrodos_conectados && state.adquisicion_en_curso) {
+        finishWithError("el ESP32 detectó electrodos desconectados y abortó la captura.");
+        return;
+      }
+      if (state.captura_pendiente) {
+        if (state.codigo_http < 200 || state.codigo_http >= 300) {
+          setStatus(`Error de guardado (${state.codigo_http || "red"}): ${state.mensaje} Se conserva la captura y el ESP32 reintentará con el mismo UUID.`);
+          reportError(new Error(state.mensaje || "La API no confirmó el guardado."));
+        } else {
+          setStatus("Procesando y guardando la captura completa en la API…");
+        }
+      } else if (state.adquisicion_en_curso) {
+        setStatus(`Adquiriendo ECG: ${state.cantidad_muestras}/${MUESTRAS_CAPTURA} muestras reales.`);
+      }
+
+      if (acquisitionId) {
+        try {
+          const results = await obtenerResultadosPersistidos();
+          const saved = results.find((result) =>
+            result?.data?.adquisicion_id === acquisitionId
+          );
+          if (saved) {
+            sensorCapturesById.set(saved.id, saved);
+            actualizarListaCapturasFisicas();
+            stopPolling();
+            app.querySelector("#error").hidden = true;
+            actualizarCapturaGuardada(saved, true);
+            return;
+          }
+        } catch (error) {
+          setStatus(`Error consultando el guardado en la API: ${error.message}`);
+          reportError(error);
+        }
+      }
+
+      if (
+        !state.captura_pendiente && !state.adquisicion_en_curso &&
+        typeof state.mensaje === "string" && /abortad[ao]/i.test(state.mensaje)
+      ) {
+        finishWithError(state.mensaje);
+        return;
+      }
+      if (
+        !state.captura_pendiente && !state.adquisicion_en_curso &&
+        state.cantidad_muestras === 0 &&
+        /guardad[ao]/i.test(state.mensaje || "")
+      ) {
+        setStatus("La API confirmó el envío; verificando el resultado del episodio…");
+      } else if (!state.electrodos_conectados && !state.captura_pendiente) {
+        setStatus("Esperando señal: conectá los electrodos al AD8232.");
+      }
+    } catch (error) {
+      setStatus(`Error de comunicación con ESP32: ${error.message}. Reintentando consulta…`);
+      reportError(error);
+    }
+    if (generation === pollingGeneration && isCapturing) {
+      pollingTimer = window.setTimeout(
+        () => { void pollAcquisition(baseUrl, generation); },
+        1000
+      );
+    }
+  }
+
+  async function esperarElectrodos(baseUrl) {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const state = await readDeviceState(baseUrl);
+      if (!state.wifi_conectado) {
+        throw new Error("El ESP32 no está conectado a la red Wi-Fi.");
+      }
+      if (state.captura_pendiente || state.adquisicion_en_curso) return state;
+      if (state.electrodos_conectados) return state;
+      setStatus("Esperando señal: conectá los electrodos al AD8232.");
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
+    throw new Error("No se detectó señal de electrodos en 30 segundos.");
+  }
+
+  async function iniciarECG() {
+    if (
+      isCapturing || episodioActivo?.estado !== "INICIADO" ||
+      !dispositivoEcg || !Number.isSafeInteger(episodioActivo.id)
+    ) return;
+
+    let baseUrl;
+    try {
+      baseUrl = deviceBaseUrl();
+    } catch (error) {
+      setStatus(`Listo para iniciar: ${error.message}`);
+      reportError(error);
+      return;
+    }
+
+    capturaActual = null;
+    acquisitionId = null;
+    sensorCapturesById = new Map();
+    clearSignal();
+    isCapturing = true;
+    updateStartButton();
+    showStep(currentStep, true);
+    app.querySelector("#estado-guardado").textContent = "";
+    setStatus("Conectando con ESP32 y verificando el episodio…");
+    app.querySelector("#estado-dispositivo").textContent =
+      "Conexión en curso con ESP32.";
+    const generation = ++pollingGeneration;
+
+    try {
+      await cargarHistorial();
+      let state = await esperarElectrodos(baseUrl);
+      if (state.adquisicion_en_curso || state.captura_pendiente) {
+        if (state.episodio_id !== episodioActivo.id || !state.adquisicion_id) {
+          throw new Error("El ESP32 tiene otra adquisición activa o pendiente.");
+        }
+        acquisitionId = state.adquisicion_id;
+        setStatus("Adquisición existente detectada; esperando su guardado sin iniciar otra.");
+      } else {
+        const formData = new URLSearchParams({
+          episodio_id: String(episodioActivo.id),
+          dispositivo_id: String(dispositivoEcg.id),
+        });
+        const configured = await requestDeviceJson(baseUrl, "/configurar", {
+          method: "POST",
+          body: formData,
+        });
+        if (
+          configured.episodio_id !== episodioActivo.id ||
+          configured.dispositivo_id !== dispositivoEcg.id
+        ) {
+          throw new Error("El ESP32 no confirmó el episodio y dispositivo solicitados.");
+        }
+        await requestDeviceJson(baseUrl, "/iniciar", { method: "POST" });
+        setStatus("Adquiriendo ECG: esperando las primeras muestras del AD8232…");
+      }
+      app.querySelector("#error").hidden = true;
+      app.querySelector("#estado-dispositivo").textContent =
+        "ESP32 conectado; adquisición física en curso.";
+      await pollAcquisition(baseUrl, generation);
+    } catch (error) {
+      isCapturing = false;
+      updateStartButton();
+      setStatus(`Error de comunicación o inicio: ${error.message}`);
+      reportError(error);
+      app.querySelector("#estado-dispositivo").textContent =
+        "No se pudo confirmar la conexión o el inicio del ESP32.";
+    }
   }
 
   app.querySelector("#paso-anterior").addEventListener("click", () => {
     if (currentStep > 0 && !isCapturing) showStep(currentStep - 1);
   });
   app.querySelector("#paso-siguiente").addEventListener("click", () => {
-    if (currentStep < stepPanels.length - 1 && !(currentStep === 2 && !capture)) showStep(currentStep + 1);
+    if (currentStep < stepPanels.length - 1 && !(currentStep === 2 && !capturaActual)) {
+      showStep(currentStep + 1);
+    }
   });
   app.querySelector("#aceptar-referencia-electrodos").addEventListener("change", (event) => {
     app.querySelector("#paso-siguiente").disabled = !event.target.checked;
     if (currentStep === 1) showStep(1);
   });
-  app.querySelector("#iniciar-simulacion").addEventListener("click", startSimulation);
-  app.querySelector("#detener-simulacion").addEventListener("click", () => {
-    stopRequested = true;
-    app.querySelector("#estado-simulacion").textContent = "Deteniendo la presentación de muestras…";
+  app.querySelector("#iniciar-ecg").addEventListener("click", () => {
+    void iniciarECG();
   });
-  app.querySelector("#repetir-simulacion").addEventListener("click", () => {
-    if (isSaving || needsVerification) return;
-    showStep(2);
-    startSimulation();
+  app.querySelector("#esp32-url").addEventListener("input", updateStartButton);
+  app.querySelector("#capturas-historicas").addEventListener("change", (event) => {
+    const result = sensorCapturesById.get(Number(event.target.value));
+    if (result) actualizarCapturaGuardada(result);
   });
-  app.querySelector("#finalizar-simulacion").addEventListener("click", finishCaptureFlow);
-  app.querySelector("#repetir-ecg").addEventListener("click", startSimulation);
-  app.querySelector("#finalizar-ecg").addEventListener("click", finishCaptureFlow);
-  app.querySelector("#guardar-resultado").addEventListener("click", guardarCaptura);
-  app.querySelector("#verificar-resultado").addEventListener("click", verificarResultadoPendiente);
+
   showStep(0);
-  updatePersistenceControls();
+  updateStartButton();
   void loadEpisodeContext();
 })();

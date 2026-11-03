@@ -1,4 +1,4 @@
-﻿import json
+import json
 import math
 import re
 import shutil
@@ -20,7 +20,12 @@ from app.common.models import (
 )
 from app.core.database import get_session
 from app.modules.ecg.router import router as ecg_router
-from app.modules.ecg.schemas import DatosECG, EntradaECG, RespuestaConsulta
+from app.modules.ecg.schemas import (
+    DatosECG,
+    EntradaECG,
+    MUESTRAS_CAPTURA_SENSOR,
+    RespuestaConsulta,
+)
 from app.modules.ecg.simulator import generar_datos_ecg
 
 
@@ -65,7 +70,7 @@ def ecg_references(test_engine, ecg_app):
             tipo_circuito="COMPLETO",
         )
         dispositivo = Dispositivo(
-            codigo="001",
+            codigo="ECG-001",
             nombre="Simulador ECG ficticio",
             tipo="ECG",
         )
@@ -90,6 +95,20 @@ def _entrada_valida(references):
     }
 
 
+def _entrada_sensor_valida(references, adquisicion_id="00000000-0000-4000-8000-000000000099"):
+    return {
+        "episodio_id": references["episodio_id"],
+        "dispositivo_id": references["dispositivo_id"],
+        "origen": "SENSOR",
+        "data": {
+            "frecuencia_muestreo_hz": 250,
+            "muestras": [2000 + (index % 100) for index in range(MUESTRAS_CAPTURA_SENSOR)],
+            "unidad": "ADC",
+            "adquisicion_id": adquisicion_id,
+        },
+    }
+
+
 _FRONTEND_INTERACTION_HARNESS = r"""
 const vm = require("node:vm");
 const input = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
@@ -101,6 +120,15 @@ const repeatedCapture = {
   unidad: "mV",
 };
 const previousAcquisitionId = "00000000-0000-4000-8000-000000000077";
+const capturedSensorResult = {
+  id: 88,
+  data: {
+    adquisicion_id: "00000000-0000-4000-8000-000000000088",
+    frecuencia_muestreo_hz: 250,
+    muestras: Array.from({ length: 2500 }, (_, index) => 1800 + (index % 200)),
+    unidad: "ADC",
+  },
+};
 
 class Element {
   constructor(id, tag = "div", attributes = "") {
@@ -127,7 +155,7 @@ class Element {
   setAttributeValue(name, value) {
     this.setAttribute(name, value);
   }
-  replaceChildren() {}
+  replaceChildren(...children) { this.children = children; }
 }
 
 for (const match of input.html.matchAll(tagPattern)) {
@@ -154,6 +182,9 @@ let simulatorRequests = 0;
 let postRequests = 0;
 let resultsRequests = 0;
 let nextResultId = 100;
+let nextIntervalId = 1;
+let mockNow = Date.now();
+const intervals = new Map();
 
 function response(status, body) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -172,7 +203,7 @@ async function fetchMock(url, options = {}) {
   }
   if (url === "/api/v1/dispositivos") {
     return response(200, [{
-      id: 23, codigo: "001", tipo: "ECG", activo: true, estado: "DISPONIBLE",
+      id: 1, codigo: "ECG-001", tipo: "ECG", activo: true, estado: "DISPONIBLE",
     }]);
   }
   if (url === "/api/v1/ecg/simulador/captura") {
@@ -185,6 +216,14 @@ async function fetchMock(url, options = {}) {
   }
   if (url === "/api/v1/ecg/resultados/42") {
     resultsRequests += 1;
+    if (input.scenario === "sensor-api-error" && resultsRequests === 1) {
+      return response(503, { detail: "API temporalmente no disponible" });
+    }
+    if (input.scenario === "sensor-mode" && resultsRequests === 2) {
+      return response(200, {
+        episodio_id: 42, modulo: "ecg", resultados: [capturedSensorResult],
+      });
+    }
     if (input.scenario === "preflight-query-fails" && resultsRequests === 1) {
       return response(503, { detail: "Consulta no disponible" });
     }
@@ -209,13 +248,25 @@ async function fetchMock(url, options = {}) {
 }
 
 const context = {
-  document: { getElementById: (id) => elements.get(id) || null },
+  document: {
+    getElementById: (id) => elements.get(id) || null,
+    createElement: (tag) => new Element(`created-${nextIntervalId++}`, tag),
+  },
   Error,
+  Date: class extends Date {
+    static now() { return mockNow; }
+  },
   Intl,
   URLSearchParams,
   window: {
     location: { search: "?episodio_id=42" },
     setTimeout: (callback) => queueMicrotask(callback),
+    setInterval: (callback) => {
+      const intervalId = nextIntervalId++;
+      intervals.set(intervalId, callback);
+      return intervalId;
+    },
+    clearInterval: (intervalId) => intervals.delete(intervalId),
   },
   fetch: fetchMock,
 };
@@ -230,7 +281,10 @@ async function click(id) {
 async function waitForContext() {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await new Promise((resolve) => setImmediate(resolve));
-    if (calls.some((call) => call.url === "/api/v1/dispositivos")) return;
+    if (
+      calls.some((call) => call.url === "/api/v1/dispositivos") &&
+      !elements.get("iniciar-escucha").disabled
+    ) return;
   }
   throw new Error("El contexto del episodio no terminó de cargar.");
 }
@@ -245,6 +299,31 @@ async function prepareCapture() {
 }
 async function run() {
   await waitForContext();
+  if (
+    input.scenario === "sensor-mode" ||
+    input.scenario === "sensor-api-error" ||
+    input.scenario === "sensor-disconnected"
+  ) {
+    const sensorMode = elements.get("modo-sensor");
+    sensorMode.checked = true;
+    await sensorMode.listeners.change({ target: sensorMode });
+    await click("iniciar-escucha");
+    const poll = intervals.values().next().value;
+    if (input.scenario === "sensor-mode") {
+      if (!poll) throw new Error("No se inició la consulta de capturas ESP32.");
+      poll();
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    } else if (input.scenario === "sensor-disconnected") {
+      if (!poll) throw new Error("No se inició la consulta de capturas ESP32.");
+      mockNow += 31000;
+      poll();
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    return snapshot({});
+  }
+
   await prepareCapture();
 
   if (input.scenario === "confirm-success") {
@@ -295,6 +374,13 @@ function snapshot(extra) {
     status: elements.get("estado-guardado").textContent,
     confirmDisabled: elements.get("guardar-resultado").disabled,
     verificationDisabled: elements.get("verificar-resultado").disabled,
+    graphLength: (elements.get("trazo-senal").attributes.points || "").length,
+    deviceStatus: elements.get("estado-dispositivo").textContent,
+    physicalStatus: elements.get("estado-fisico").textContent,
+    timeAxis: elements.get("tiempo-total").textContent,
+    source: elements.get("origen-resumen").textContent,
+    saveHidden: elements.get("guardar-resultado").hidden,
+    sensorHistoryHidden: elements.get("capturas-historicas").hidden,
   };
 }
 
@@ -521,6 +607,133 @@ def test_guardar_resultado_valido(ecg_client, test_engine, ecg_references):
     assert json.loads(resultado.data_json) == entrada["data"]
 
 
+def test_post_resultados_recibe_captura_sensor_y_persiste(ecg_client, test_engine, ecg_references):
+    entrada = _entrada_sensor_valida(ecg_references)
+
+    response = ecg_client.post(RUTA, json=entrada)
+
+    assert response.status_code == 201
+    assert response.json()["mensaje"] == "Resultado guardado correctamente"
+    with Session(test_engine) as session:
+        resultado = session.exec(select(ResultadoModulo)).one()
+    assert resultado.modulo == "ecg"
+    assert resultado.dispositivo_id == ecg_references["dispositivo_id"]
+    assert json.loads(resultado.data_json) == entrada["data"]
+
+
+@pytest.mark.parametrize(
+    "mutacion",
+    [
+        lambda entrada: entrada["data"].update(frecuencia_muestreo_hz=200),
+        lambda entrada: entrada["data"].update(unidad="mV"),
+        lambda entrada: entrada["data"].update(muestras=entrada["data"]["muestras"][:-1]),
+        lambda entrada: entrada["data"].update(adquisicion_id=None),
+        lambda entrada: entrada.update(dispositivo_id=0),
+        lambda entrada: entrada["data"]["muestras"].__setitem__(0, 4096),
+        lambda entrada: entrada["data"]["muestras"].__setitem__(0, -1),
+        lambda entrada: entrada["data"]["muestras"].append(2048),
+        lambda entrada: entrada.pop("dispositivo_id"),
+    ],
+)
+def test_post_resultados_rechaza_capturas_fisicas_invalidas(ecg_client, ecg_references, mutacion):
+    entrada = _entrada_sensor_valida(ecg_references)
+    mutacion(entrada)
+
+    response = ecg_client.post(RUTA, json=entrada)
+
+    assert response.status_code == 422
+
+
+def test_esp32_reintento_idempotente_conserva_capturas_historicas(
+    ecg_client, ecg_references, test_engine
+):
+    historica = _entrada_valida(ecg_references)
+    historica["data"]["adquisicion_id"] = "00000000-0000-4000-8000-000000000088"
+    sensor = _entrada_sensor_valida(ecg_references)
+
+    primera_historica = ecg_client.post(RUTA, json=historica)
+    primera_captura = ecg_client.post(RUTA, json=sensor)
+    reintento = ecg_client.post(RUTA, json=sensor)
+    consulta = ecg_client.get(f"{RUTA}/{ecg_references['episodio_id']}")
+
+    assert primera_historica.status_code == 201
+    assert primera_captura.status_code == 201
+    assert reintento.status_code == 200
+    assert reintento.json()["resultado_id"] == primera_captura.json()["resultado_id"]
+    assert consulta.status_code == 200
+    resultados = consulta.json()["resultados"]
+    assert len(resultados) == 2
+    assert resultados[0]["id"] == primera_historica.json()["resultado_id"]
+    assert resultados[1]["id"] == primera_captura.json()["resultado_id"]
+    assert resultados[1]["data"]["adquisicion_id"] == sensor["data"]["adquisicion_id"]
+    with Session(test_engine) as session:
+        assert len(session.exec(select(ResultadoModulo)).all()) == 2
+
+
+def test_esp32_no_asocia_captura_a_un_dispositivo_distinto(
+    ecg_client, ecg_references, test_engine
+):
+    with Session(test_engine) as session:
+        dispositivo = Dispositivo(
+            codigo="ECG-002",
+            nombre="Otro dispositivo ECG",
+            tipo="ECG",
+        )
+        session.add(dispositivo)
+        session.commit()
+        session.refresh(dispositivo)
+        dispositivo_id = dispositivo.id
+
+    entrada = _entrada_sensor_valida(ecg_references)
+    entrada["dispositivo_id"] = dispositivo_id
+
+    response = ecg_client.post(RUTA, json=entrada)
+
+    assert response.status_code == 422
+    with Session(test_engine) as session:
+        assert session.exec(select(ResultadoModulo)).all() == []
+
+
+def test_esp32_asocia_captura_al_episodio_y_rechaza_episodio_inexistente(
+    ecg_client, ecg_references, test_engine
+):
+    entrada = _entrada_sensor_valida(ecg_references)
+    entrada["episodio_id"] = 999999
+
+    response = ecg_client.post(RUTA, json=entrada)
+
+    assert response.status_code == 404
+    with Session(test_engine) as session:
+        assert session.exec(select(ResultadoModulo)).all() == []
+
+
+def test_esp32_rechaza_episodio_cerrado(ecg_client, ecg_references, test_engine):
+    with Session(test_engine) as session:
+        episodio = session.get(EpisodioAtencion, ecg_references["episodio_id"])
+        episodio.estado = "FINALIZADO"
+        session.add(episodio)
+        session.commit()
+
+    response = ecg_client.post(
+        RUTA,
+        json=_entrada_sensor_valida(ecg_references),
+    )
+
+    assert response.status_code == 409
+    with Session(test_engine) as session:
+        assert session.exec(select(ResultadoModulo)).all() == []
+
+
+def test_swagger_registra_un_unico_post_ecg_para_guardar_resultados(ecg_app):
+    paths = ecg_app.openapi()["paths"]
+    post_ecg_paths = [
+        path for path, methods in paths.items()
+        if path.startswith("/api/v1/ecg/") and "post" in methods
+    ]
+
+    assert post_ecg_paths == [RUTA]
+
+
 def test_simulador_genera_identidad_nueva_aunque_las_muestras_sean_iguales(ecg_client):
     first = ecg_client.get("/api/v1/ecg/simulador/captura")
     second = ecg_client.get("/api/v1/ecg/simulador/captura")
@@ -691,20 +904,19 @@ def test_pantalla_ecg_disponible_desde_router_principal(ecg_client):
     assert "/api/v1/ecg/frontend.js" in response.text
 
 
-def test_pantalla_ecg_delimita_contextos_hu09_y_hu14(ecg_client):
+def test_pantalla_ecg_muestra_el_contexto_sin_datos_de_simulacion(ecg_client):
     html = ecg_client.get("/api/v1/ecg/pantalla").text
 
-    assert "no se recibió una clasificación roja válida" in html
-    assert "no se recibió un episodio del circuito completo" in html
-    assert "esta pantalla no declara que el flujo HU-09 esté habilitado" in html
+    assert 'id="episodio-contexto"' in html
+    assert 'id="episodio-inicio"' in html
+    assert "episodio real" in html
+    assert "simulación" not in html.lower()
 
 
 def test_pantalla_transversal_no_solicita_paciente_sin_contexto(ecg_client):
     html_response = ecg_client.get("/api/v1/ecg/circuito/pantalla")
-    js_response = ecg_client.get("/api/v1/ecg/circuito/frontend.js")
 
     assert html_response.status_code == 200
-    assert js_response.status_code == 200
     assert html_response.headers["cache-control"] == "no-store"
     assert 'name="tipo_circuito" value="GUARDIA"' in html_response.text
     assert 'name="tipo_circuito" value="COMPLETO"' in html_response.text
@@ -713,48 +925,10 @@ def test_pantalla_transversal_no_solicita_paciente_sin_contexto(ecg_client):
     assert "no define un mecanismo para compartirlo entre pantallas" in html_response.text
     assert 'id="abrir-ecg"' in html_response.text
     assert "Si esta pantalla recibe un `episodio_id` real en la URL" in html_response.text
-    assert 'new URLSearchParams(window.location.search).get("episodio_id")' in js_response.text
-    assert '`/api/v1/episodios/${episodeId}`' in js_response.text
-    assert 'openEcg.href = `/api/v1/ecg/pantalla?episodio_id=${encodeURIComponent(episode.id)}`' in js_response.text
-    assert 'app.querySelector("#episodio-inicio").textContent = formatEpisodeDate(episode.iniciado_en)' in js_response.text
-    assert "No se selecciona ningún paciente automáticamente." in js_response.text
-    assert 'radio.addEventListener("change"' in js_response.text
-    html_ids = re.findall(r'\bid="([^"]+)"', html_response.text)
-    selectors = re.findall(r'app\.querySelector\("#([^\"]+)"\)', js_response.text)
-    assert len(html_ids) == len(set(html_ids))
-    assert set(selectors) <= set(html_ids)
-
-
-def test_pantalla_temporal_prueba_hu03_y_ecg(client):
-    page = client.get("/api/v1/ecg/circuito/prueba")
-    script = client.get("/api/v1/ecg/circuito/frontend.js")
-
-    assert page.status_code == 200
-    assert "text/html" in page.headers["content-type"]
-    assert page.headers["cache-control"] == "no-store"
-    assert "Herramienta temporal de prueba" in page.text
-    assert 'data-mode="prueba"' in page.text
-    assert 'src="/api/v1/ecg/circuito/frontend.js"' in page.text
-    assert 'value="">Cargando pacientes…' in page.text
-    assert 'name="tipo_circuito" value="GUARDIA"' in page.text
-    assert 'name="tipo_circuito" value="COMPLETO"' in page.text
-    assert script.status_code == 200
-    assert 'API + "/pacientes"' in script.text
-    assert 'new Option("Seleccioná un paciente existente…", "")' in script.text
-    assert 'API + "/episodios"' in script.text
-    assert 'API + "/episodios/" + created.id' in script.text
-    assert "checked.paciente_id !== patient.id" in script.text
-    assert 'root.querySelector("#seccion-ecg-prueba").hidden = false' in script.text
-    assert 'API + "/dispositivos"' in script.text
-    assert 'API + "/ecg/simulador/captura"' in script.text
-    assert 'API + "/ecg/resultados"' in script.text
-    assert 'API + "/ecg/resultados/" + episode.id' in script.text
-    assert "localStorage" not in script.text
-    assert "sessionStorage" not in script.text
-    normal_flow, test_flow = script.text.split("function startTestMode(root)", maxsplit=1)
-    assert 'new URLSearchParams(window.location.search).get("episodio_id")' in normal_flow
-    assert "URLSearchParams" not in test_flow
-
+    assert 'id="episodio-activo"' in html_response.text
+    assert 'id="episodio-id"' in html_response.text
+    assert 'id="episodio-circuito"' in html_response.text
+    assert 'id="episodio-inicio"' in html_response.text
 
 def test_api_pacientes_devuelve_registros_reales_para_modo_prueba(client):
     created = client.post(
@@ -775,24 +949,6 @@ def test_api_pacientes_devuelve_registros_reales_para_modo_prueba(client):
     assert patient["nombre"] == "Paciente"
     assert patient["apellido"] == "Prueba temporal"
     assert patient["dni"] == "30987654"
-
-
-def test_pantallas_y_javascript_ecg_accesibles_desde_app_principal(client):
-    pantalla_ecg = client.get("/api/v1/ecg/pantalla")
-    pantalla_circuito = client.get("/api/v1/ecg/circuito/pantalla")
-    javascript_ecg = client.get("/api/v1/ecg/frontend.js")
-    javascript_circuito = client.get("/api/v1/ecg/circuito/frontend.js")
-
-    assert pantalla_ecg.status_code == 200
-    assert "text/html" in pantalla_ecg.headers["content-type"]
-    assert 'src="/api/v1/ecg/frontend.js"' in pantalla_ecg.text
-    assert pantalla_circuito.status_code == 200
-    assert "text/html" in pantalla_circuito.headers["content-type"]
-    assert 'src="/api/v1/ecg/circuito/frontend.js"' in pantalla_circuito.text
-    assert javascript_ecg.status_code == 200
-    assert "javascript" in javascript_ecg.headers["content-type"]
-    assert javascript_circuito.status_code == 200
-    assert "javascript" in javascript_circuito.headers["content-type"]
 
 
 @pytest.mark.parametrize("tipo_circuito", ["GUARDIA", "COMPLETO"])
@@ -882,12 +1038,12 @@ def test_app_principal_persiste_y_consulta_ecg_simulado(
 
     dispositivo_response = client.post(
         "/api/v1/dispositivos",
-        json={"codigo": "001", "nombre": "ECG de prueba", "tipo": "ECG"},
+        json={"codigo": "ECG-001", "nombre": "ECG de prueba", "tipo": "ECG"},
     )
     assert dispositivo_response.status_code == 201
     dispositivos = client.get("/api/v1/dispositivos")
     assert dispositivos.status_code == 200
-    dispositivo = next(item for item in dispositivos.json() if item["codigo"] == "001")
+    dispositivo = next(item for item in dispositivos.json() if item["codigo"] == "ECG-001")
     assert dispositivo["tipo"] == "ECG"
     assert dispositivo["activo"] is True
     assert dispositivo["estado"] == "DISPONIBLE"
@@ -941,7 +1097,7 @@ def test_app_principal_no_persiste_resultado_con_referencia_inexistente(
     ).json()
     dispositivo = client.post(
         "/api/v1/dispositivos",
-        json={"codigo": "001", "nombre": "ECG de prueba", "tipo": "ECG"},
+        json={"codigo": "ECG-001", "nombre": "ECG de prueba", "tipo": "ECG"},
     ).json()
     entrada = {
         "episodio_id": episodio["id"],
@@ -958,126 +1114,59 @@ def test_app_principal_no_persiste_resultado_con_referencia_inexistente(
         assert session.exec(select(ResultadoModulo)).all() == []
 
 
-def test_frontend_ecg_prepara_persistencia_con_contexto_real(ecg_client):
+def test_frontend_usa_solo_adquisicion_fisica_y_guarda_al_confirmar_api(ecg_client):
     html = ecg_client.get("/api/v1/ecg/pantalla").text
     response = ecg_client.get("/api/v1/ecg/frontend.js")
+    javascript = response.text
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert "/ecg/simulador/captura" in response.text
-    assert "new URLSearchParams(window.location.search)" in response.text
-    assert "${API}/episodios/${episodioId}" in response.text
-    assert "${API}/dispositivos" in response.text
-    assert 'device.codigo === "001"' in response.text
-    assert 'device.tipo === "ECG"' in response.text
-    assert "device.activo === true" in response.text
-    assert 'origen: "SIMULADOR"' in response.text
-    assert 'method: "POST"' in response.text
-    assert "${API}/ecg/resultados/${episodioActivo.id}" in response.text
-    assert '<section id="persistencia-panel"' in html
-    assert '<button id="guardar-resultado" type="button" disabled>' in html
-    assert 'saveButton.hidden = false' in response.text
-    assert 'saveButton.disabled = !(hasEpisode && dispositivoEcg && capture' in response.text
-    assert "paciente_id" not in response.text
-    assert "no se declara completado el flujo rojo HU-09" in response.text
-    assert "Prueba técnica HU-14" in response.text
-    assert "localStorage" not in response.text
-    assert "sessionStorage" not in response.text
+    assert 'id="iniciar-ecg"' in html
+    assert ">Iniciar ECG</button>" in html
+    assert 'id="esp32-url"' in html
+    assert 'id="trazo-senal"' in html
+    assert 'id="capturas-historicas"' in html
+    assert "/configurar" in javascript
+    assert "/iniciar" in javascript
+    assert "/api/ecg" in javascript
+    assert "${API}/ecg/resultados/${episodioActivo.id}" in javascript
+    assert "Resultado guardado: la API confirmó" in javascript
+    assert "adquisicion_id" in javascript
+    assert 'device.codigo === "ECG-001"' in javascript
+    assert 'dispositivo_id: String(dispositivoEcg.id)' in javascript
+    assert "Number.isSafeInteger(device.id)" in javascript
+    assert "origen: \"SIMULADOR\"" not in javascript
+    assert "/ecg/simulador/captura" not in javascript
+    assert "SIMULACIÓN" not in html
+    assert "simulación" not in html.lower()
+    assert 'id="modo-simulacion"' not in html
+    assert 'id="guardar-resultado"' not in html
+    assert "finalizar sin guardar" not in html.lower()
+    assert 'id="finalizar-simulacion"' not in html
+    assert 'id="finalizar-ecg"' not in html
+    results_url = "`${API}/ecg/resultados/${episodioActivo.id}`"
+    results_query = javascript[javascript.index(results_url):]
+    assert 'method: "POST"' not in results_query[:200]
+    assert "Math.sin" not in javascript
 
 
-def test_frontend_ecg_reconcilia_error_antes_de_habilitar_reintento(ecg_client):
+def test_frontend_conserva_navegacion_y_grafica_sin_controles_legacy(ecg_client):
+    html = ecg_client.get("/api/v1/ecg/pantalla").text
     javascript = ecg_client.get("/api/v1/ecg/frontend.js").text
 
-    assert "async function reconcileUnconfirmedSave(error)" in javascript
-    assert "await obtenerResultadosPersistidos()" in javascript
-    assert "const match = results.find((result) => sameAcquisition(result.data, capture))" in javascript
-    assert "canSubmitCapture = false" in javascript
-    assert "canSubmitCapture = true" in javascript
-    assert "El POST falló: ${postError}" in javascript
-    assert "Además, no se pudo consultar el estado" in javascript
-    assert "mostrarResultados(results)" not in javascript
-    assert "results.some((result) => result.id === savedResultId && sameAcquisition(result.data, capture))" in javascript
-    assert "if (!episodioActivo || !Number.isSafeInteger(episodioActivo.id) || episodioActivo.id <= 0" in javascript
-    assert "paciente_id" not in javascript
-
-
-def test_frontend_confirmar_envia_contexto_y_verifica_persistencia(ecg_client):
-    result = _run_frontend_interaction_test(ecg_client, "confirm-success")
-
-    posts = [
-        call for call in result["calls"]
-        if call["url"] == RUTA and call["method"] == "POST"
-    ]
-    assert len(posts) == 1
-    assert posts[0]["body"]["episodio_id"] == 42
-    assert posts[0]["body"]["dispositivo_id"] == 23
-    assert posts[0]["body"]["origen"] == "SIMULADOR"
-    assert posts[0]["body"]["data"] == {
-        "adquisicion_id": "00000000-0000-4000-8000-000000000001",
-        "frecuencia_muestreo_hz": 250,
-        "muestras": [0.1, 0.3],
-        "unidad": "mV",
-    }
-    assert result["resultsRequests"] == 2
-    assert len(result["records"]) == 1
-    assert "guardado del resultado" in result["status"]
-    assert result["errorVisible"] is False
-
-
-def test_frontend_repetir_no_guarda_ni_borra_historicos_o_duplica(ecg_client):
-    result = _run_frontend_interaction_test(ecg_client, "repeat-no-save")
-
-    assert result["postsAfterRepeat"] == 0
-    assert result["recordsAfterRepeat"] == 1
-    assert result["postRequests"] == 1
-    assert len(result["records"]) == 2
-    assert result["records"][0]["data"]["adquisicion_id"] != result["records"][1]["data"]["adquisicion_id"]
-    assert result["records"][0]["data"]["muestras"] == result["records"][1]["data"]["muestras"]
-    assert "guardado del resultado" in result["status"]
-
-
-def test_frontend_muestra_error_post_y_reconcilia_antes_de_reintentar(ecg_client):
-    result = _run_frontend_interaction_test(ecg_client, "post-422")
-
-    assert result["postRequests"] == 1
-    assert result["resultsRequests"] == 2
-    assert result["records"] == []
-    assert result["errorVisible"] is True
-    assert "422" in result["error"]
-    assert "muestras para el episodio" in result["status"]
-    assert result["confirmDisabled"] is False
-
-
-def test_frontend_no_envia_post_si_falla_consulta_previa(ecg_client):
-    result = _run_frontend_interaction_test(ecg_client, "preflight-query-fails")
-
-    assert result["resultsRequests"] == 1
-    assert result["postRequests"] == 0
-    assert result["errorVisible"] is True
-    assert "503" in result["error"]
-    assert "POST porque no se pudo comprobar" in result["status"]
-
-
-def test_frontend_bloquea_repetir_hasta_resolver_guardado_incierto(ecg_client):
-    result = _run_frontend_interaction_test(ecg_client, "uncertain-query-fails")
-
-    assert result["repeatDisabledWhileUncertain"] is True
-    assert result["simulatorCountAfterBlockedRepeat"] == result["simulatorCountWhileUncertain"]
-    assert result["errorVisibleWhileUncertain"] is True
-    assert "503" in result["errorWhileUncertain"]
-    assert result["postRequests"] == 1
-    assert result["resultsRequests"] == 3
-    assert len(result["records"]) == 1
-    assert " #100." in result["status"]
-
-
-def test_frontend_muestra_error_de_validacion_del_simulador(ecg_client):
-    result = _run_frontend_interaction_test(ecg_client, "invalid-simulator")
-
-    assert result["postRequests"] == 0
-    assert result["records"] == []
-    assert result["errorVisible"] is True
-    assert "datos ECG" in result["error"]
+    step_ids = ["paso-preparacion", "paso-electrodos", "paso-captura", "paso-resumen"]
+    assert [html.index(f'id="{step_id}"') for step_id in step_ids] == sorted(
+        html.index(f'id="{step_id}"') for step_id in step_ids
+    )
+    html_ids = re.findall(r'\bid="([^"]+)"', html)
+    assert len(html_ids) == len(set(html_ids))
+    selectors = re.findall(r'app\.querySelector\("#([^"]+)"\)', javascript)
+    assert set(selectors) <= set(html_ids)
+    assert 'id="paso-siguiente"' in html
+    assert '<dl id="resumen-tecnico"' in html
+    assert 'src="/api/v1/ecg/frontend.js"' in html
+    assert "muestras: shown" not in javascript
+    assert "origen: \"SIMULADOR\"" not in javascript
 
 
 def test_frontend_ecg_muestra_fecha_del_episodio_si_la_api_la_devuelve(ecg_client):
@@ -1088,32 +1177,6 @@ def test_frontend_ecg_muestra_fecha_del_episodio_si_la_api_la_devuelve(ecg_clien
     assert 'episode.iniciado_en' in javascript
     assert 'dateStyle: "short"' in javascript
     assert 'timeStyle: "short"' in javascript
-
-
-def test_herramienta_temporal_muestra_estado_y_requisitos_del_guardado(ecg_client):
-    html = ecg_client.get("/api/v1/ecg/circuito/prueba").text
-    javascript = ecg_client.get("/api/v1/ecg/circuito/frontend.js").text
-
-    assert '<button id="guardar-ecg-prueba" type="button" hidden disabled>' in html
-    assert 'id="disponibilidad-guardado-prueba"' in html
-    assert 'saveButton.addEventListener("click", saveCapture)' in javascript
-    assert 'item.tipo === "ECG"' in javascript
-    assert 'item.estado === "DISPONIBLE"' in javascript
-    assert 'item.activo === true' in javascript
-    assert 'Number.isSafeInteger(item.id) && item.id > 0' in javascript
-    assert 'item.codigo === "001"' in javascript
-    assert 'id="episodio-inicio-prueba"' in html
-    assert 'episode.iniciado_en' in javascript
-    assert 'dispositivo_id: device.id' in javascript
-    assert "No se encontró un dispositivo ECG activo y disponible" in javascript
-    assert "falta un episodio verificado" in javascript
-    assert "falta un dispositivo ECG activo y disponible" in javascript
-    assert "falta generar la señal simulada" in javascript
-    assert "Consultando resultados existentes antes de enviar la captura" in javascript
-    assert 'API + "/ecg/resultados"' in javascript
-    assert 'API + "/ecg/resultados/" + episode.id' in javascript
-    assert "Guardado confirmado y verificado por la API" in javascript
-    assert "paciente_id: episode.paciente_id" not in javascript
 
 
 def test_captura_simulada_reutiliza_esquema_ecg(ecg_client):
@@ -1145,9 +1208,7 @@ def test_pantalla_ecg_mantiene_la_secuencia_de_navegacion(ecg_client):
     assert all(f'#{step_id}' in javascript for step_id in step_ids)
     assert javascript.count('app.querySelector("#paso-siguiente").addEventListener("click"') == 1
     assert "showStep(currentStep + 1)" in javascript
-    assert 'app.querySelector("#repetir-ecg").addEventListener("click", startSimulation)' in javascript
-    assert 'app.querySelector("#finalizar-ecg").addEventListener("click", finishCaptureFlow)' in javascript
-    assert 'app.querySelector("#finalizar-simulacion").addEventListener("click", finishCaptureFlow)' in javascript
+    assert 'app.querySelector("#iniciar-ecg").addEventListener("click"' in javascript
     assert 'id="paso-guardar"' not in html
     assert 'id="paciente-seleccionado"' not in html
     assert 'id="paso-siguiente"' in html
@@ -1155,13 +1216,9 @@ def test_pantalla_ecg_mantiene_la_secuencia_de_navegacion(ecg_client):
     assert 'id="cantidad-final"' in html
     assert 'id="frecuencia-final"' in html
     assert 'id="unidad-final"' in html
-    assert 'app.querySelector("#cantidad-final").textContent = String(capture.muestras.length)' in javascript
-    assert 'app.querySelector("#frecuencia-final").textContent = `${capture.frecuencia_muestreo_hz} Hz`' in javascript
-    assert 'app.querySelector("#unidad-final").textContent = capture.unidad' in javascript
-    assert "muestras: shown" in javascript
-    assert "${API}/ecg/resultados" in javascript
-    assert "origen: \"SIMULADOR\"" in javascript
+    assert 'id="trazo-senal"' in html
+    assert "capturaActual.muestras" in javascript
+    assert "adquisicion_id" in javascript
     assert "localStorage" not in javascript
     assert "sessionStorage" not in javascript
-    assert "No se guardó ningún resultado." in html
     assert 'src="/api/v1/ecg/frontend.js"' in html
