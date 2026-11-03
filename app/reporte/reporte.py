@@ -20,6 +20,65 @@ NOMBRES_SUBINDICES = {
     "antropometrico": "Antropométrico",
 }
 
+MODULOS_REPORTE = (
+    (
+        "signos_vitales",
+        "Grupo 1 · Signos vitales",
+        (
+            ("presion_sistolica", "Presión sistólica"),
+            ("presion_diastolica", "Presión diastólica"),
+            ("frecuencia_cardiaca", "Frecuencia cardíaca"),
+            ("temperatura", "Temperatura"),
+            ("saturacion_oxigeno", "Saturación de oxígeno"),
+        ),
+    ),
+    (
+        "ecg",
+        "Grupo 2 · ECG",
+        (
+            ("frecuencia_muestreo_hz", "Frecuencia de muestreo (Hz)"),
+            ("muestras", "Muestras"),
+            ("unidad", "Unidad"),
+        ),
+    ),
+    (
+        "glucemia",
+        "Grupo 3 · Glucemia",
+        (
+            ("valor", "Valor"),
+            ("unidad", "Unidad"),
+            ("metodo", "Método"),
+        ),
+    ),
+    (
+        "boca",
+        "Grupo 4 · Boca",
+        (
+            ("nombre_imagen", "Nombre de imagen"),
+            ("observacion_tecnica", "Observación técnica"),
+        ),
+    ),
+    (
+        "vista",
+        "Grupo 5 · Vista",
+        (
+            ("prueba", "Prueba"),
+            ("ojo_derecho", "Ojo derecho"),
+            ("ojo_izquierdo", "Ojo izquierdo"),
+            ("distancia_cm", "Distancia (cm)"),
+        ),
+    ),
+    (
+        "oido",
+        "Grupo 6 · Oído",
+        (
+            ("frecuencias_hz", "Frecuencias (Hz)"),
+            ("resultados_oido_derecho", "Respuestas oído derecho"),
+            ("resultados_oido_izquierdo", "Respuestas oído izquierdo"),
+        ),
+    ),
+)
+
 # estado -> (fondo, texto)
 COLORES_ESTADO = {
     "ROJO": ("#fee2e2", "#991b1b"),
@@ -59,6 +118,67 @@ def _lista(valor) -> list:
     if isinstance(valor, str):
         return [valor]
     return [str(v) for v in valor]
+
+
+def _formatear_dato_modulo(valor) -> str:
+    if valor is None or valor == "":
+        return "Sin datos registrados"
+    if isinstance(valor, bool):
+        return "Sí" if valor else "No"
+    if isinstance(valor, list):
+        if not valor:
+            return "Sin datos registrados"
+        return ", ".join(_formatear_dato_modulo(item) for item in valor)
+    if isinstance(valor, dict):
+        if not valor:
+            return "Sin datos registrados"
+        return "; ".join(
+            f"{clave}: {_formatear_dato_modulo(item)}"
+            for clave, item in valor.items()
+        )
+    return str(valor)
+
+
+def _resultados_por_modulo(por_modulo: dict) -> list[dict]:
+    resultados = []
+    for modulo, nombre, campos in MODULOS_REPORTE:
+        registros = por_modulo.get(modulo) or []
+        registro = registros[-1] if registros else {}
+        data = registro.get("data") if isinstance(registro, dict) else None
+        data = data if isinstance(data, dict) else {}
+        etiquetas = dict(campos)
+        campos_presentes = [
+            (campo, etiqueta)
+            for campo, etiqueta in campos
+        ]
+        campos_presentes.extend(
+            (campo, campo.replace("_", " ").capitalize())
+            for campo in data
+            if campo not in etiquetas
+        )
+        detalles = [
+            {
+                "campo": campo,
+                "etiqueta": etiqueta,
+                "valor": data.get(campo),
+                "valor_formateado": _formatear_dato_modulo(data.get(campo)),
+            }
+            for campo, etiqueta in campos_presentes
+        ]
+        tiene_datos = any(
+            detalle["valor_formateado"] != "Sin datos registrados"
+            for detalle in detalles
+        )
+        resultados.append(
+            {
+                "modulo": modulo,
+                "nombre": nombre,
+                "estado": "Datos registrados" if tiene_datos else "Sin datos obtenidos",
+                "tiene_datos": tiene_datos,
+                "detalles": detalles,
+            }
+        )
+    return resultados
 
 
 def _resultados_reales_oido(datos_oido: dict | None, origen: str | None) -> dict | None:
@@ -376,7 +496,7 @@ def _audiometria_svg(audiometria: dict) -> str:
         )
 
     return (
-        '<section class="panel audiometria-panel">'
+        '<div class="audiometria-panel">'
         '<div class="panel-header">Audiometría por frecuencia</div>'
         f'<p class="audiometria-nota">{pie} Este equipo no registra niveles calibrados en dB HL, '
         'por lo que el gráfico describe respuestas y no umbrales auditivos.</p>'
@@ -387,7 +507,7 @@ def _audiometria_svg(audiometria: dict) -> str:
         '<div class="audiometria-legend">'
         '<span><i class="legend-marker right"></i>Estímulo en oído derecho (círculo)</span>'
         '<span><i class="legend-marker left"></i>Estímulo en oído izquierdo (cruz)</span>'
-        '</div></section>'
+        '</div></div>'
     )
 
 # ------------------------------------------------------------------ construcción
@@ -452,8 +572,6 @@ def construir_reporte(
                 for frecuencia, valor in zip(frecuencias, valores)
             )
             mediciones.append([etiqueta, resumen])
-        if resultados_auditivos["origen"]:
-            mediciones.append(["Origen registrado", resultados_auditivos["origen"]])
         if datos_oido.get("nivel_senal") == "REDUCIDO_POR_AUTOINFORME":
             mediciones.append(
                 [
@@ -485,6 +603,7 @@ def construir_reporte(
         "titulo": TITULO,
         "subtitulo": SUBTITULO,
         "paciente": datos_paciente,
+        "resultados_por_modulo": _resultados_por_modulo(por_modulo),
         "mediciones": mediciones,
         "triaje": {"estado": estado or "PENDIENTE", "subindices": subindices},
         "analisis_ia": analisis_ia,
@@ -579,6 +698,27 @@ body {
   text-transform: uppercase;
   font-weight: 800;
   color: #475569;
+}
+.module-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.module-state {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  color: #64748b;
+  background: #f8fafc;
+  font-size: 10px;
+  font-weight: 700;
+}
+.module-state.disponible {
+  border-color: #bbf7d0;
+  color: #166534;
+  background: #f0fdf4;
 }
 .metric-grid {
   display: grid;
@@ -929,7 +1069,7 @@ def _formulario_oido_html(cuestionario: dict | None) -> str:
 
     respuesta = "Sí" if tiene_problema else "No"
     return (
-        '<section class="panel">'
+        '<div class="formulario-oido">'
         '<div class="panel-header">Formulario</div>'
         '<div class="metric"><span class="metric-label">¿Presenta algún problema o inconveniente de audición?</span>'
         f'<span class="metric-value">{escape(respuesta)}</span></div>'
@@ -937,7 +1077,7 @@ def _formulario_oido_html(cuestionario: dict | None) -> str:
         f'<span class="metric-value">{escape(str(len(problemas)) if problemas else "0")}</span></div>'
         f'<div class="panel-header">Problemas auditivos</div>{bloque_problemas}'
         f'<div class="panel-header">Factores marcados</div>{bloque_factores}'
-        '</section>'
+        '</div>'
     )
 
 
@@ -994,20 +1134,68 @@ def render_html(reporte: dict) -> str:
         for etiqueta, valor in reporte["mediciones"]
     )
     bloque_mediciones = (
-        '<section class="panel">'
+        '<div class="resultados-audiometria">'
         '<div class="panel-header">Resultados reales registrados · Audiometría</div>'
         f'<div class="metric-grid">{mediciones_grid}</div>'
         '<p class="resultados-nota">“Sí” indica que la persona reportó percibir el tono; '
         '“No” indica que seleccionó “No escuché”. Son respuestas de la prueba, '
         'no umbrales auditivos clínicos.</p>'
-        '</section>'
+        '</div>'
         if reporte["mediciones"]
         else ""
     )
-
-    bloque_alertas = _lista_html(reporte["alertas"], "• ")
     bloque_audiometria = _audiometria_svg(reporte.get("audiometria", {}))
     bloque_formulario = _formulario_oido_html(reporte.get("cuestionario"))
+    bloques_modulos = []
+    for modulo in reporte.get("resultados_por_modulo", []):
+        es_oido = modulo["modulo"] == "oido"
+        claves_audiometria = {
+            "ensayos",
+            "frecuencias_hz",
+            "resultados_oido_derecho",
+            "resultados_oido_izquierdo",
+            "cuestionario",
+        }
+        detalles_modulo = modulo["detalles"]
+        if es_oido and (bloque_mediciones or bloque_audiometria or bloque_formulario):
+            detalles_modulo = [
+                detalle
+                for detalle in detalles_modulo
+                if detalle["campo"] not in claves_audiometria
+            ]
+        detalles = "".join(
+            '<div class="metric">'
+            f'<span class="metric-label">{escape(str(detalle["etiqueta"]))}</span>'
+            f'<span class="metric-value">{escape(detalle["valor_formateado"])}</span>'
+            '</div>'
+            for detalle in detalles_modulo
+        )
+        estado_modulo = (
+            "Datos registrados"
+            if modulo["tiene_datos"]
+            else "Sin datos obtenidos"
+        )
+        bloques_modulos.append(
+            '<section class="panel">'
+            '<div class="module-heading">'
+            f'<div class="panel-header">{escape(modulo["nombre"])}</div>'
+            f'<span class="module-state{" disponible" if modulo["tiene_datos"] else ""}">'
+            f'{estado_modulo}</span>'
+            '</div>'
+            f'<div class="metric-grid">{detalles}</div>'
+            f'{bloque_mediciones if es_oido else ""}'
+            f'{bloque_audiometria if es_oido else ""}'
+            f'{bloque_formulario if es_oido else ""}'
+            '</section>'
+        )
+    bloque_modulos = (
+        '<section aria-labelledby="resultados-modulos-titulo">'
+        '<h2 class="panel-header" id="resultados-modulos-titulo">Resultados de los módulos</h2>'
+        f'{"".join(bloques_modulos)}'
+        '</section>'
+    )
+
+    bloque_alertas = _lista_html(reporte["alertas"], "• ")
 
     return (
         '<!doctype html><html lang="es"><head><meta charset="utf-8">'
@@ -1029,8 +1217,7 @@ def render_html(reporte: dict) -> str:
         '<div class="panel-header">Datos del paciente</div>'
         f'<div class="metric-grid">{paciente_grid}</div>'
         '</section>'
-        f'{bloque_mediciones}'
-        f'{bloque_audiometria}'
+        f'{bloque_modulos}'
         '<section class="summary-card">'
         '<div class="panel-header">Resultado preventivo general</div>'
         f'<div class="estado-box" style="background:{fondo};color:{texto}">ESTADO DEL TRIAJE: {escape(estado)}</div>'
@@ -1041,7 +1228,6 @@ def render_html(reporte: dict) -> str:
         '<div class="panel-header">Observaciones / alertas</div>'
         f'{bloque_alertas}'
         '</section>'
-        f'{bloque_formulario}'
         f'<p class="leyenda">{escape(reporte["leyenda"])}</p>'
         '</div></div>'
         '<div class="no-print"><button type="button" onclick="window.print()">Imprimir / Guardar como PDF</button></div>'
