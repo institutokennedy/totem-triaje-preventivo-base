@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Consentimiento Informado{% endblock %}
+
+{% block content %}
+<div class="container my-4">
+    <div class="card shadow-sm p-4">
+        <h2 class="mb-3">Consentimiento Informado para Atención de Triaje</h2>
+        <p class="text-muted">Episodio N°: <strong id="episodio-id-display">--</strong></p>
+
+        <!-- 1. Texto de la Versión Vigente del Consentimiento -->
+        <div class="card bg-light mb-4">
+            <div class="card-body" style="max-height: 250px; overflow-y: auto;">
+                <h5>Términos y Condiciones (Versión v1.0)</h5>
+                <p>
+                    Por medio de la presente, declaro haber sido informado/a adecuadamente sobre el procedimiento de 
+                    triaje preventivo, el cual abarca la evaluación y captura técnica de parámetros de salud 
+                    (tales como signos vitales, glucemia, evaluaciones de cavidad oral, vista u oído según el circuito).
+                </p>
+                <p>
+                    Comprendo que las mediciones realizadas son de carácter técnico y orientativo para establecer la 
+                    prioridad de atención en el establecimiento de salud, y no reemplazan una consulta o diagnóstico médico formal.
+                </p>
+                <p>
+                    Autorizo el almacenamiento seguro de los datos generados durante este episodio de atención para su 
+                    procesamiento funcional e integración en el informe final.
+                </p>
+            </div>
+        </div>
+
+        <!-- 2. Formulario de Selección (Aceptar / Rechazar) -->
+        <div id="seccion-decision">
+            <div class="mb-3">
+                <label for="observacion" class="form-label">Observaciones adicionales (Opcional):</label>
+                <input type="text" id="observacion" class="form-control" placeholder="Ingrese alguna aclaración u observación si corresponde">
+            </div>
+
+            <div class="d-flex gap-3">
+                <button id="btn-aceptar" class="btn btn-success btn-lg">Aceptar Consentimiento</button>
+                <button id="btn-rechazar" class="btn btn-outline-danger btn-lg">Rechazar Consentimiento</button>
+            </div>
+        </div>
+
+        <!-- 3. Mensaje de Estado (Habilitación o Bloqueo) -->
+        <div id="mensaje-estado" class="mt-4" style="display: none;"></div>
+
+        <!-- 4. Botón de Continuidad al Panel -->
+        <div id="seccion-navegacion" class="mt-4" style="display: none;">
+            <button id="btn-continuar-panel" class="btn btn-primary btn-lg">Continuar al Panel del Episodio</button>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const episodioId = parseInt(urlParams.get('episodio_id') || localStorage.getItem('episodio_id') || '1');
+    document.getElementById('episodio-id-display').textContent = episodioId;
+
+    const seccionDecision = document.getElementById('seccion-decision');
+    const mensajeEstado = document.getElementById('mensaje-estado');
+    const seccionNavegacion = document.getElementById('seccion-navegacion');
+    const observacionInput = document.getElementById('observacion');
+    const btnAceptar = document.getElementById('btn-aceptar');
+    const btnRechazar = document.getElementById('btn-rechazar');
+    const btnContinuarPanel = document.getElementById('btn-continuar-panel');
+
+    const VERSION_VIGENTE = "v1.0";
+
+    // Consultar si ya existe un consentimiento registrado previamente para el episodio
+    async function cargarConsentimientoExistente() {
+        try {
+            const res = await fetch(`/api/v1/consentimientos/${episodioId}`);
+            if (res.ok) {
+                const consentimiento = await res.json();
+                actualizarInterfazSegunDecision(consentimiento);
+            }
+        } catch (error) {
+            console.log("No hay consentimiento registrado para este episodio.");
+        }
+    }
+
+    function actualizarInterfazSegunDecision(consentimiento) {
+        seccionDecision.style.display = 'none';
+        mensajeEstado.style.display = 'block';
+
+        if (consentimiento.aceptado) {
+            mensajeEstado.className = 'alert alert-success';
+            mensajeEstado.innerHTML = `
+                <h4>Consentimiento Aceptado</h4>
+                <p>La autorización fue registrada correctamente (Versión ${consentimiento.version}) el ${new Date(consentimiento.fecha_hora).toLocaleString()}.</p>
+                <p class="mb-0"><strong>Estado:</strong> Recorrido habilitado para las mediciones del episodio.</p>
+            `;
+            seccionNavegacion.style.display = 'block';
+        } else {
+            mensajeEstado.className = 'alert alert-danger';
+            mensajeEstado.innerHTML = `
+                <h4>Consentimiento Rechazado</h4>
+                <p>El paciente ha rechazado el consentimiento para este episodio.</p>
+                <p class="mb-0"><strong>Atención:</strong> El acceso a los módulos que requieren autorización queda bloqueado sin borrar la decisión registrada.</p>
+            `;
+            seccionNavegacion.style.display = 'none';
+        }
+    }
+
+    // Enviar decisión (POST /api/v1/consentimientos)
+    async function guardarDecision(aceptado) {
+        const payload = {
+            episodio_id: episodioId,
+            version: VERSION_VIGENTE,
+            aceptado: aceptado,
+            observacion: observacionInput.value || null
+        };
+
+        try {
+            const res = await fetch('/api/v1/consentimientos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                actualizarInterfazSegunDecision(data);
+            } else {
+                const err = await res.json();
+                alert(`Error al registrar consentimiento (${res.status}): ${err.detail || 'Petición inválida'}`);
+            }
+        } catch (err) {
+            alert("Error de conexión al comunicarse con la API de consentimiento.");
+        }
+    }
+
+    btnAceptar.addEventListener('click', () => guardarDecision(true));
+    btnRechazar.addEventListener('click', () => guardarDecision(false));
+
+    btnContinuarPanel.addEventListener('click', () => {
+        window.location.href = `/episodio?episodio_id=${episodioId}`;
+    });
+
+    await cargarConsentimientoExistente();
+});
+</script>
+{% endblock %}

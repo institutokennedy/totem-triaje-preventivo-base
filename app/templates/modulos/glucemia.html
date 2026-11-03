@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+
+{% block title %}Módulo de Glucemia — Control por Teclado{% endblock %}
+
+{% block content %}
+<style>
+    /* Estilos visuales de alto contraste y foco para navegación por teclado */
+    .tecla-badge {
+        background-color: #212529;
+        color: #ffffff;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-family: monospace;
+        font-weight: bold;
+        font-size: 0.9rem;
+    }
+    
+    .opcion-teclado {
+        border: 2px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        cursor: pointer;
+        transition: all 0.2s ease-in-out;
+    }
+
+    .opcion-teclado.activa-foco {
+        border-color: #0d6efd;
+        background-color: #e7f1ff;
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        font-weight: bold;
+    }
+
+    .btn-teclado:focus, .btn-teclado.foco-teclado {
+        outline: 4px solid #ffc107 !important;
+        box-shadow: 0 0 10px rgba(255, 193, 7, 0.8) !important;
+    }
+</style>
+
+<div class="container my-4">
+    <div class="card shadow-lg p-4">
+        <!-- Encabezado con ayuda de teclado -->
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2>Módulo de Glucemia</h2>
+            <div class="text-end">
+                <span class="badge bg-secondary p-2">
+                    Episodio N°: <strong id="episodio-id-display">--</strong>
+                </span>
+            </div>
+        </div>
+
+        <!-- Barra inferior fija de atajos de teclado -->
+        <div class="alert alert-dark d-flex align-items-center justify-content-around py-2 mb-4">
+            <span><span class="tecla-badge">↑ / ↓</span> Navegar opciones</span>
+            <span><span class="tecla-badge">ENTER / ESPACIO</span> Seleccionar</span>
+            <span><span class="tecla-badge">C</span> Confirmar</span>
+            <span><span class="tecla-badge">R</span> Repetir</span>
+        </div>
+
+        <!-- ESTADO 1: INSTRUCCIONES -->
+        <div id="estado-instrucciones" class="estado-seccion">
+            <div class="alert alert-info">
+                <h4>Instrucciones del Módulo</h4>
+                <p class="mb-1">Utilice las <strong>flechas arriba/abajo</strong> del teclado para seleccionar el origen de la medición y presione <strong>ENTER</strong> para comenzar.</p>
+            </div>
+
+            <h5 class="mt-4 mb-3">Seleccione el origen de la lectura:</h5>
+            <div class="row g-3 mb-4">
+                <div class="col-md-6">
+                    <div id="opcion-sensor" class="opcion-teclado activa-foco" tabindex="0" data-origen="SENSOR">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span>1. Sensor Físico (ESP32 / Fotodiodo)</span>
+                            <span class="tecla-badge">Opción 1</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div id="opcion-simulador" class="opcion-teclado" tabindex="0" data-origen="SIMULADOR">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span>2. Simulador por Software</span>
+                            <span class="tecla-badge">Opción 2</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <button id="btn-comenzar" class="btn btn-primary btn-lg w-100 btn-teclado" tabindex="0">
+                [ENTER] Comenzar Medición
+            </button>
+        </div>
+
+        <!-- ESTADO 2: MIDIENDO -->
+        <div id="estado-midiendo" class="estado-seccion text-center py-5" style="display: none;">
+            <div class="spinner-border text-primary mb-3" style="width: 4rem; height: 4rem;" role="status"></div>
+            <h3>Capturando lectura de glucemia...</h3>
+            <p class="text-muted">Procesando señal analógica enviada por la ESP32 o el simulador...</p>
+        </div>
+
+        <!-- ESTADO 3: RESULTADO -->
+        <div id="estado-resultado" class="estado-seccion" style="display: none;">
+            <div class="card bg-light border-dark p-4 mb-4 text-center">
+                <h4 class="text-secondary">Resultado Obtenido</h4>
+                <div class="display-3 fw-bold text-dark my-2">
+                    <span id="res-valor">--</span> <span id="res-unidad" class="fs-3 text-muted"></span>
+                </div>
+                <p class="mb-1 fs-5"><strong>Método:</strong> <span id="res-metodo">--</span></p>
+                <p class="mb-0 text-muted"><strong>Origen:</strong> <span id="res-origen">--</span></p>
+            </div>
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <button id="btn-confirmar" class="btn btn-success btn-lg w-100 btn-teclado foco-teclado" tabindex="0">
+                        [Tecla C] Confirmar y Guardar
+                    </button>
+                </div>
+                <div class="col-md-6">
+                    <button id="btn-repetir" class="btn btn-outline-danger btn-lg w-100 btn-teclado" tabindex="0">
+                        [Tecla R] Repetir Medición
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ESTADO 4: ERROR -->
+        <div id="estado-error" class="estado-seccion" style="display: none;">
+            <div class="alert alert-danger p-4 text-center">
+                <h4 id="error-titulo">Falla Técnica</h4>
+                <p id="error-mensaje" class="fs-5 mb-0"></p>
+            </div>
+            <button id="btn-reintentar-error" class="btn btn-secondary btn-lg w-100 btn-teclado" tabindex="0">
+                [ENTER] Volver al Inicio
+            </button>
+        </div>
+
+        <!-- ESTADO 5: CONFIRMADO -->
+        <div id="estado-confirmado" class="estado-seccion text-center py-4" style="display: none;">
+            <div class="alert alert-success p-4">
+                <h3>¡Resultado Confirmado!</h3>
+                <p class="fs-5 mb-0">La medición se ha persistido correctamente en la tabla ResultadoModulo.</p>
+            </div>
+            <a id="btn-continuar-panel" class="btn btn-primary btn-lg w-100 btn-teclado" tabindex="0" href="/episodio">
+                [ENTER] Volver al Panel del Episodio
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // 1. Obtención del episodio activo
+    const urlParams = new URLSearchParams(window.location.search);
+    const episodioId = parseInt(urlParams.get('episodio_id') || localStorage.getItem('episodio_id') || '1');
+    document.getElementById('episodio-id-display').textContent = episodioId;
+
+    // Referencias de los 5 estados
+    const secInstrucciones = document.getElementById('estado-instrucciones');
+    const secMidiendo = document.getElementById('estado-midiendo');
+    const secResultado = document.getElementById('estado-resultado');
+    const secError = document.getElementById('estado-error');
+    const secConfirmado = document.getElementById('estado-confirmado');
+
+    // Elementos interactivos
+    const opcionSensor = document.getElementById('opcion-sensor');
+    const opcionSimulador = document.getElementById('opcion-simulador');
+    const btnComenzar = document.getElementById('btn-comenzar');
+    const btnConfirmar = document.getElementById('btn-confirmar');
+    const btnRepetir = document.getElementById('btn-repetir');
+    const btnReintentarError = document.getElementById('btn-reintentar-error');
+
+    let estadoActual = 'INSTRUCCIONES'; // INSTRUCCIONES, MIDIENDO, RESULTADO, ERROR, CONFIRMADO
+    let origenSeleccionado = 'SENSOR';
+    let medicionTemporal = null;
+    const DISPOSITIVO_ID = 1; // ID registrado en SQLite para GLU-001
+
+    function cambiarEstado(nuevoEstado) {
+        estadoActual = nuevoEstado;
+        secInstrucciones.style.display = 'none';
+        secMidiendo.style.display = 'none';
+        secResultado.style.display = 'none';
+        secError.style.display = 'none';
+        secConfirmado.style.display = 'none';
+
+        if (nuevoEstado === 'INSTRUCCIONES') {
+            secInstrucciones.style.display = 'block';
+            btnComenzar.focus();
+        } else if (nuevoEstado === 'MIDIENDO') {
+            secMidiendo.style.display = 'block';
+        } else if (nuevoEstado === 'RESULTADO') {
+            secResultado.style.display = 'block';
+            btnConfirmar.focus();
+        } else if (nuevoEstado === 'ERROR') {
+            secError.style.display = 'block';
+            btnReintentarError.focus();
+        } else if (nuevoEstado === 'CONFIRMADO') {
+            secConfirmado.style.display = 'block';
+            document.getElementById('btn-continuar-panel').focus();
+        }
+    }
+
+    function seleccionarOrigen(origen) {
+        origenSeleccionado = origen;
+        if (origen === 'SENSOR') {
+            opcionSensor.classList.add('activa-foco');
+            opcionSimulador.classList.remove('activa-foco');
+        } else {
+            opcionSimulador.classList.add('activa-foco');
+            opcionSensor.classList.remove('activa-foco');
+        }
+    }
+
+    // --- MANEJO CENTRALIZADO DEL TECLADO ---
+    document.addEventListener('keydown', (e) => {
+        // Atajo directo para seleccionar número 1 o 2 en Instrucciones
+        if (estadoActual === 'INSTRUCCIONES') {
+            if (e.key === '1') seleccionarOrigen('SENSOR');
+            if (e.key === '2') seleccionarOrigen('SIMULADOR');
+
+            if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                seleccionarOrigen('SENSOR');
+            } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                seleccionarOrigen('SIMULADOR');
+            } else if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                ejecutarMedicion();
+            }
+        } 
+        else if (estadoActual === 'RESULTADO') {
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                if (document.activeElement === btnConfirmar) {
+                    btnRepetir.focus();
+                } else {
+                    btnConfirmar.focus();
+                }
+            } else if (e.key.toLowerCase() === 'c') {
+                confirmarMedicion();
+            } else if (e.key.toLowerCase() === 'r') {
+                repetirMedicion();
+            }
+        }
+        else if (estadoActual === 'ERROR') {
+            if (e.key === 'Enter' || e.key === ' ' || e.key.toLowerCase() === 'r') {
+                cambiarEstado('INSTRUCCIONES');
+            }
+        }
+    });
+
+    // Acción de inicio de medición
+    async function ejecutarMedicion() {
+        cambiarEstado('MIDIENDO');
+
+        if (origenSeleccionado === 'SIMULADOR') {
+            setTimeout(() => {
+                medicionTemporal = {
+                    episodio_id: episodioId,
+                    dispositivo_id: DISPOSITIVO_ID,
+                    origen: "SIMULADOR",
+                    data: {
+                        valor: parseFloat((Math.random() * (130 - 70) + 70).toFixed(1)),
+                        unidad: "mg/dL",
+                        metodo: "SIMULADO"
+                    }
+                };
+                mostrarResultado(medicionTemporal);
+            }, 1200);
+        } else {
+            try {
+                const res = await fetch(`/api/v1/glucemia/resultados/${episodioId}`);
+                if (res.ok) {
+                    const lista = await res.json();
+                    if (lista.length > 0) {
+                        const ultima = lista[lista.length - 1];
+                        medicionTemporal = {
+                            episodio_id: episodioId,
+                            dispositivo_id: DISPOSITIVO_ID,
+                            origen: "SENSOR",
+                            data: ultima.data
+                        };
+                        mostrarResultado(medicionTemporal);
+                    } else {
+                        mostrarError("No hay mediciones enviadas por la ESP32 para este episodio.");
+                    }
+                } else {
+                    mostrarError("Error al consultar la API.");
+                }
+            } catch (err) {
+                mostrarError("Falla de conexión con el backend.");
+            }
+        }
+    }
+
+    function mostrarResultado(medicion) {
+        document.getElementById('res-valor').textContent = medicion.data.valor;
+        document.getElementById('res-unidad').textContent = medicion.data.unidad;
+        document.getElementById('res-metodo').textContent = medicion.data.metodo;
+        document.getElementById('res-origen').textContent = medicion.origen;
+        cambiarEstado('RESULTADO');
+    }
+
+    function mostrarError(mensaje) {
+        document.getElementById('error-mensaje').textContent = mensaje;
+        cambiarEstado('ERROR');
+    }
+
+    function repetirMedicion() {
+        medicionTemporal = null;
+        cambiarEstado('INSTRUCCIONES');
+    }
+
+    async function confirmarMedicion() {
+        if (!medicionTemporal) return;
+
+        try {
+            const res = await fetch('/api/v1/glucemia/resultados', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(medicionTemporal)
+            });
+
+            if (res.ok) {
+                cambiarEstado('CONFIRMADO');
+            } else {
+                const err = await res.json();
+                mostrarError(`Error API ${res.status}: ${err.detail || 'Rechazado'}`);
+            }
+        } catch (err) {
+            mostrarError("Falla de red al intentar guardar.");
+        }
+    }
+
+    // Eventos de ratón por si también se hace clic
+    btnComenzar.addEventListener('click', ejecutarMedicion);
+    btnConfirmar.addEventListener('click', confirmarMedicion);
+    btnRepetir.addEventListener('click', repetirMedicion);
+    btnReintentarError.addEventListener('click', () => cambiarEstado('INSTRUCCIONES'));
+    opcionSensor.addEventListener('click', () => seleccionarOrigen('SENSOR'));
+    opcionSimulador.addEventListener('click', () => seleccionarOrigen('SIMULADOR'));
+});
+</script>
+{% endblock %}
