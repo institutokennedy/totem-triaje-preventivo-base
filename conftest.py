@@ -34,6 +34,7 @@ def demo_references(test_engine, client) -> dict[str, int]:
             apellido="Ficticio",
             fecha_nacimiento=date(2000, 1, 1),
             email="paciente@example.test",
+            telefono="3515550100",
         )
         session.add(patient)
         session.commit()

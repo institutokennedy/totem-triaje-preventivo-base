@@ -1,68 +1,325 @@
 {% extends "base.html" %}
 
+{% block title %}Resumen del episodio · Tótem{% endblock %}
+
 {% block content %}
 <style>
-  .resumen { max-width: 720px; margin: 0 auto; padding: 1.5rem 1rem; font-family: system-ui, sans-serif; }
-  .resumen h2 { margin-top: 1.5rem; }
-  .resumen ul { padding-left: 1.2rem; }
-  .resumen .hecho::marker { color: #2a7a3b; }
-  .resumen .pendiente::marker { color: #b26a00; }
-  .resumen button { padding: .7rem 1.2rem; border: 1px solid #1f4e5f; border-radius: 6px; background: #1f4e5f; color: #fff; font-size: 1rem; cursor: pointer; }
-  .resumen button.secundario { background: #fff; color: #1f4e5f; }
-  .resumen button:disabled { opacity: .5; cursor: not-allowed; }
-  .resumen button:focus-visible { outline: 3px solid #e0a100; outline-offset: 2px; }
-  .resumen .acciones { display: flex; gap: .75rem; margin: 1.5rem 0; flex-wrap: wrap; }
-  .resumen .leyenda { padding: .75rem; border-left: 4px solid #1f4e5f; background: #eef3f5; }
-  .resumen .error { color: #a12626; }
-  .resumen pre { white-space: pre-wrap; overflow-x: auto; background: #f6f6f6; padding: .75rem; }
+  .page-shell { width: min(100% - 2rem, 1040px); margin: 2rem auto 3rem; }
+  .resumen {
+    width: 100%;
+    max-width: none;
+    margin: 0 auto;
+  }
+  .resumen-encabezado { margin-bottom: 1.5rem; }
+  .resumen-eyebrow {
+    margin: 0 0 .45rem;
+    color: var(--teal-dark);
+    font-size: .75rem;
+    font-weight: 750;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  .resumen-encabezado h1 { margin-bottom: .35rem; }
+  .resumen-descripcion { margin: 0; color: var(--muted); }
+  .tarjeta-resumen {
+    margin: 1rem 0;
+    padding: clamp(1.1rem, 3vw, 1.6rem);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: 0 8px 24px rgba(23, 51, 47, .05);
+  }
+  .resumen-paciente {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    border-top: 3px solid var(--teal);
+  }
+  .paciente-avatar {
+    display: grid;
+    flex: 0 0 3.25rem;
+    width: 3.25rem;
+    aspect-ratio: 1;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--teal-dark);
+    background: #e8f2ef;
+    font-size: 1.15rem;
+    font-weight: 750;
+  }
+  .paciente-datos { min-width: 0; flex: 1; }
+  .paciente-nombre { margin: 0; font-size: 1.1rem; font-weight: 700; overflow-wrap: anywhere; }
+  .paciente-meta { margin: .2rem 0 0; color: var(--muted); font-size: .9rem; }
+  .estado-insignia {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+    padding: .3rem .75rem;
+    border: 1px solid #b7d9d2;
+    border-radius: 999px;
+    color: #075e55;
+    background: #edf8f5;
+    font-size: .78rem;
+    font-weight: 750;
+    white-space: nowrap;
+  }
+  .estado-insignia.cerrado { border-color: #d3d9d6; color: #53615d; background: #f0f3f1; }
+  .estado-insignia.error { border-color: #efb7ac; color: #9c3425; background: #fff3f0; }
+  .progreso-tarjeta { padding: 1rem 1.2rem; }
+  .progreso-cabecera {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: .65rem;
+    color: var(--muted);
+    font-size: .86rem;
+  }
+  .progreso-cabecera strong { color: var(--ink); }
+  .progreso-riel {
+    height: .55rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e8eeeb;
+  }
+  .progreso-valor {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #087e72, #2ba58e);
+    transition: width .35s ease;
+  }
+  .resumen-secciones {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .resumen-secciones .tarjeta-resumen { margin: 0; }
+  .resumen-titulo-seccion {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    margin: 0 0 1rem;
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 700;
+  }
+  .seccion-icono {
+    display: grid;
+    width: 1.8rem;
+    aspect-ratio: 1;
+    place-items: center;
+    border-radius: 7px;
+    color: var(--teal-dark);
+    background: #e8f2ef;
+    font-size: .9rem;
+  }
+  .lista-modulos { display: grid; gap: .55rem; margin: 0; padding: 0; list-style: none; }
+  .lista-modulos li {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    min-height: 2.45rem;
+    padding: .5rem .7rem;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--ink);
+    background: #fff;
+    font-size: .91rem;
+  }
+  .lista-modulos li::before {
+    display: grid;
+    flex: 0 0 1.3rem;
+    width: 1.3rem;
+    aspect-ratio: 1;
+    place-items: center;
+    border-radius: 50%;
+    content: "✓";
+    color: #087e55;
+    background: #e8f6ee;
+    font-size: .75rem;
+    font-weight: 800;
+  }
+  .lista-modulos li.pendiente::before {
+    content: "·";
+    color: #93630b;
+    background: #fff5d9;
+    font-size: 1.25rem;
+  }
+  .lista-modulos li.vacio { color: var(--muted); background: #f8faf9; }
+  .lista-modulos li.vacio::before { content: "—"; color: #788580; background: #edf1ef; }
+  .ia-tarjeta { border-left: 3px solid var(--focus); }
+  .ia-estado { margin: 0; color: var(--muted); line-height: 1.55; }
+  .ia-estado.activa { color: #075e55; }
+  .ia-estado.error { color: #9c3425; }
+  .resumen-acciones {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .7rem;
+    margin: 1.25rem 0;
+  }
+  .resumen-acciones button {
+    min-height: 2.8rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+  }
+  .resumen-acciones .secundario {
+    border-color: var(--line);
+    color: var(--ink);
+    background: #fff;
+  }
+  .resumen-acciones .secundario:hover:not(:disabled) { background: #edf1ef; }
+  .resumen-acciones button[aria-busy="true"] { opacity: .8; cursor: progress; }
+  .nota-resumen { margin: -.25rem 0 1.25rem; color: var(--muted); font-size: .84rem; }
+  .estado-generacion {
+    min-height: 1.5rem;
+    margin: -.5rem 0 .75rem;
+    color: var(--muted);
+    font-size: .9rem;
+  }
+  .estado-generacion:not(:empty) { padding-left: .2rem; }
+  .mensaje-error {
+    margin: 1rem 0;
+    padding: .8rem 1rem;
+    border: 1px solid #efb7ac;
+    border-radius: 8px;
+    color: #9c3425;
+    background: #fff3f0;
+  }
+  .informe-panel { padding: clamp(1rem, 3vw, 1.5rem); }
+  .informe-cabecera {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .informe-cabecera h2 { margin: 0 0 .3rem; }
+  .informe-cabecera p { margin: 0; color: var(--muted); }
+  .informe-enlaces { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1rem 0; }
+  .informe-enlaces a {
+    display: inline-flex;
+    min-height: 2.55rem;
+    align-items: center;
+    padding: .55rem .85rem;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--teal-dark);
+    background: #fff;
+    font-size: .9rem;
+    font-weight: 650;
+    text-decoration: none;
+  }
+  .informe-enlaces a:hover { background: #edf8f5; }
+  #vista-informe {
+    display: block;
+    width: 100%;
+    min-height: 70vh;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #f8faf9;
+  }
+  @media (max-width: 680px) {
+    .page-shell { width: calc(100% - 1rem); margin-top: 1.1rem; }
+    .resumen-secciones { grid-template-columns: 1fr; }
+    .resumen-paciente { align-items: flex-start; flex-wrap: wrap; }
+    .estado-insignia { margin-left: 4.25rem; }
+    .informe-cabecera { display: block; }
+    #vista-informe { min-height: 60vh; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .tarjeta-resumen { animation: arrive .25s ease-out both; }
+  }
 </style>
 
-<main class="resumen" id="resumen-app">
-  <h1>Resumen del episodio</h1>
+<div class="resumen" id="resumen-app">
+  <header class="resumen-encabezado">
+    <p class="resumen-eyebrow">Atención preventiva</p>
+    <h1>Resumen del episodio</h1>
+    <p class="resumen-descripcion">Revisa el estado de la atención y los módulos completados antes de generar el informe.</p>
+  </header>
 
-  <section aria-labelledby="h-estado">
-    <h2 id="h-estado">Estado</h2>
-    <p id="datos-paciente">Cargando…</p>
-    <p id="estado-episodio"></p>
+  <section class="tarjeta-resumen resumen-paciente" aria-label="Datos del episodio">
+    <div class="paciente-avatar" id="paciente-avatar" aria-hidden="true">P</div>
+    <div class="paciente-datos">
+      <p class="paciente-nombre" id="datos-paciente">Cargando paciente…</p>
+      <p class="paciente-meta" id="meta-episodio">Preparando datos del episodio</p>
+    </div>
+    <span class="estado-insignia" id="estado-episodio" role="status">Cargando estado…</span>
   </section>
 
-  <section aria-labelledby="h-realizados">
-    <h2 id="h-realizados">Módulos realizados</h2>
-    <ul id="lista-completados"></ul>
+  <section class="tarjeta-resumen progreso-tarjeta" aria-label="Progreso de los módulos">
+    <div class="progreso-cabecera">
+      <span>Progreso del episodio</span>
+      <strong id="progreso-texto">0 de 6 módulos</strong>
+    </div>
+    <div
+      class="progreso-riel"
+      id="progreso-barra"
+      role="progressbar"
+      aria-label="Módulos del episodio completados"
+      aria-valuemin="0"
+      aria-valuemax="6"
+      aria-valuenow="0"
+    >
+      <div class="progreso-valor" id="progreso-valor"></div>
+    </div>
   </section>
 
-  <section aria-labelledby="h-pendientes">
-    <h2 id="h-pendientes">Módulos pendientes</h2>
-    <ul id="lista-pendientes"></ul>
-  </section>
+  <div class="resumen-secciones">
+    <section class="tarjeta-resumen" aria-labelledby="h-realizados">
+      <h2 class="resumen-titulo-seccion" id="h-realizados">
+        <span class="seccion-icono" aria-hidden="true">✓</span> Módulos realizados
+      </h2>
+      <ul class="lista-modulos" id="lista-completados" aria-live="polite"></ul>
+    </section>
 
-  <section aria-labelledby="h-ia">
-    <h2 id="h-ia">Integración de análisis con IA</h2>
-    <p id="estado-configuracion-ia" role="status">Comprobando configuración…</p>
-  </section>
-
-  <div class="acciones">
-    <button type="button" id="btn-generar">Generar informe y análisis con IA</button>
-    <button type="button" class="secundario" id="btn-cerrar">Cerrar episodio</button>
+    <section class="tarjeta-resumen" aria-labelledby="h-pendientes">
+      <h2 class="resumen-titulo-seccion" id="h-pendientes">
+        <span class="seccion-icono" aria-hidden="true">○</span> Módulos pendientes
+      </h2>
+      <ul class="lista-modulos" id="lista-pendientes" aria-live="polite"></ul>
+    </section>
   </div>
 
-  <p class="error" id="mensaje-error" role="alert" hidden></p>
-
-  <section id="seccion-informe" hidden aria-labelledby="h-informe">
-    <h2 id="h-informe">Informe final</h2>
-    <p class="leyenda" id="leyenda-informe"></p>
-    <p id="estado-analisis-ia" role="status"></p>
-    <p class="acciones">
-      <a id="enlace-html" href="#" target="_blank" rel="noopener">Abrir informe</a>
-      &nbsp;|&nbsp;
-      <a id="enlace-pdf" href="#" target="_blank" rel="noopener">Imprimir / Guardar como PDF desde el informe</a>
-    </p>
-    <iframe id="vista-informe" title="Vista previa del informe"
-            style="width:100%;height:1000px;border:1px solid #cbd5e1"></iframe>
+  <section class="tarjeta-resumen ia-tarjeta" aria-labelledby="h-ia">
+    <h2 class="resumen-titulo-seccion" id="h-ia">
+      <span class="seccion-icono" aria-hidden="true">✦</span> Análisis asistido por IA
+    </h2>
+    <p id="estado-configuracion-ia" class="ia-estado" role="status" aria-live="polite">Comprobando configuración…</p>
   </section>
-</main>
+
+  <div class="resumen-acciones">
+    <button type="button" id="btn-generar">
+      <span aria-hidden="true">▤</span> Generar informe
+    </button>
+    <button type="button" class="secundario" id="btn-cerrar">
+      <span aria-hidden="true">✓</span> Cerrar episodio
+    </button>
+  </div>
+  <p class="estado-generacion" id="estado-generacion" role="status" aria-live="polite"></p>
+  <p class="nota-resumen">El análisis automatizado es orientativo y no reemplaza la revisión del personal de salud.</p>
+
+  <p class="mensaje-error" id="mensaje-error" role="alert" hidden></p>
+
+  <section class="tarjeta-resumen informe-panel" id="seccion-informe" hidden aria-labelledby="h-informe">
+    <div class="informe-cabecera">
+      <div>
+        <h2 id="h-informe">Informe final</h2>
+        <p id="estado-analisis-ia" role="status"></p>
+      </div>
+    </div>
+    <p class="nota-resumen" id="leyenda-informe"></p>
+    <nav class="informe-enlaces" aria-label="Acciones del informe">
+      <a id="enlace-html" href="#" target="_blank" rel="noopener">Abrir informe</a>
+      <a id="enlace-pdf" href="#" target="_blank" rel="noopener">Imprimir o guardar como PDF</a>
+    </nav>
+    <iframe id="vista-informe" title="Vista previa del informe"></iframe>
+  </section>
+</div>
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', path='js/resumen.js') }}?v=7"></script>
+<script src="{{ url_for('static', path='js/resumen.js') }}?v=10"></script>
 {% endblock %}

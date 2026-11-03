@@ -6,6 +6,39 @@ def test_paginas_de_oido_y_resumen(client):
     assert "Evaluación auditiva" in pagina_oido.text
     assert pagina_resumen.status_code == 200
     assert "Resumen del episodio" in pagina_resumen.text
+    assert "resumen-secciones" in pagina_resumen.text
+    assert "informe final" in pagina_resumen.text.lower()
+
+
+def test_ilustraciones_de_instrucciones_auditivas(client):
+    ilustraciones = {
+        "auriculares": "Colocarse los auriculares estéreo",
+        "tonos": "Escuchar los tonos en orden aleatorio",
+        "respuestas": "Elegir una respuesta en pantalla",
+    }
+
+    for nombre, descripcion in ilustraciones.items():
+        respuesta = client.get(f"/static/img/instruccion-{nombre}.svg")
+        assert respuesta.status_code == 200
+        assert descripcion in respuesta.text
+
+
+def test_prueba_auditiva_usa_solo_respuestas_en_pantalla(client):
+    pagina = client.get("/oido?episodio_id=1")
+    script = client.get("/static/js/oido.js")
+
+    assert pagina.status_code == 200
+    assert "haga clic en" in pagina.text
+    assert "btn-izquierdo" in pagina.text
+    assert "btn-derecho" in pagina.text
+    assert "btn-no-escuche" in pagina.text
+    assert "joystick" not in pagina.text.lower()
+    assert "joystick" not in script.text.lower()
+    assert "/api/v1/oido/respuestas/" not in script.text
+    assert 'return "PANTALLA"' in script.text
+    assert 'estado.resolver("IZQUIERDO")' in script.text
+    assert 'estado.resolver("DERECHO")' in script.text
+    assert 'estado.resolver("NO_ESCUCHE")' in script.text
 
 
 def test_estado_de_integracion_ia_no_revela_la_clave(client, monkeypatch):
@@ -77,9 +110,20 @@ def test_resultado_oido_se_incluye_en_informe(client, demo_references, monkeypat
     )
     assert informe_response.status_code == 201
     informe = informe_response.json()
+    datos_personales = dict(informe["contenido"]["reporte"]["paciente"])
+    assert datos_personales["Nombre Completo"] == "Paciente Ficticio"
+    assert datos_personales["DNI"] == "00000000"
+    assert datos_personales["Fecha de nacimiento"] == "01/01/2000"
+    assert datos_personales["Correo"] == "paciente@example.test"
+    assert datos_personales["Teléfono"] == "3515550100"
     registro_oido = informe["contenido"]["resultados"]["oido"][0]
+    reporte_oido = informe["contenido"]["reporte"]["resultados_auditivos"]
     assert registro_oido["origen"] == "SIMULADOR"
     assert registro_oido["data"]["resultados_oido_derecho"] == [True, False]
+    assert reporte_oido["frecuencias_hz"] == [500, 1000]
+    assert reporte_oido["resultados_oido_derecho"] == [True, False]
+    assert reporte_oido["resultados_oido_izquierdo"] == [True, True]
+    assert reporte_oido["origen"] == "SIMULADOR"
     assert registro_oido["data"]["nivel_senal"] == "REDUCIDO_POR_AUTOINFORME"
     assert registro_oido["data"]["cuestionario"]["problemas_auditivos"] == [
         "hipoacusia"
@@ -100,10 +144,19 @@ def test_resultado_oido_se_incluye_en_informe(client, demo_references, monkeypat
         f"/api/v1/episodios/{episodio_id}/informes/{informe['id']}/html"
     )
     assert pagina_informe.status_code == 200
+    for dato_personal in (
+        "Paciente Ficticio",
+        "00000000",
+        "01/01/2000",
+        "paciente@example.test",
+        "3515550100",
+    ):
+        assert dato_personal in pagina_informe.text
     assert "Informe preventivo. No constituye un diagnóstico médico." in pagina_informe.text
     assert "Análisis orientativo asistido por IA" in pagina_informe.text
     assert "No disponible" in pagina_informe.text
-    assert "Reducido por autoinforme" in pagina_informe.text
+    assert "Ajuste aplicado por autoinforme" in pagina_informe.text
+    assert "Volumen digital reducido; no es una medición acústica calibrada" in pagina_informe.text
 
 
 def test_informe_incluye_analisis_ia_como_orientativo(

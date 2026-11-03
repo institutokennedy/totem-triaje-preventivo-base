@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Elegir una respuesta en pantalla</title>
+  <desc id="desc">Una pantalla muestra tres botones para responder si el tono se oyó a la izquierda, a la derecha o no se oyó.</desc>
+  <rect x="1" y="1" width="238" height="158" rx="22" fill="#F0F7F4"/>
+  <rect x="27" y="17" width="186" height="126" rx="13" fill="#FFFFFF" stroke="#C9DDD5" stroke-width="2"/>
+  <rect x="38" y="28" width="164" height="20" rx="6" fill="#E8F2EF"/>
+  <circle cx="48" cy="38" r="3" fill="#087E72"/>
+  <path d="M58 38h74" stroke="#9BB9AE" stroke-width="3" stroke-linecap="round"/>
+  <text x="120" y="65" text-anchor="middle" fill="#17332F" font-family="Arial, sans-serif" font-size="9" font-weight="700">¿DÓNDE ESCUCHÓ EL TONO?</text>
+  <rect x="40" y="76" width="70" height="26" rx="7" fill="#087E72"/>
+  <path d="M79 89H62m0 0 5-5m-5 5 5 5" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="75" y="97" text-anchor="middle" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="8" font-weight="700">IZQUIERDA</text>
+  <rect x="130" y="76" width="70" height="26" rx="7" fill="#087E72"/>
+  <path d="M151 89h17m0 0-5-5m5 5-5 5" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="165" y="97" text-anchor="middle" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="8" font-weight="700">DERECHA</text>
+  <rect x="58" y="111" width="124" height="22" rx="7" fill="#FFF4E5" stroke="#E8A23A" stroke-width="1.5"/>
+  <circle cx="76" cy="122" r="6" stroke="#A56608" stroke-width="1.5"/>
+  <path d="m72 118 8 8m0-8-8 8" stroke="#A56608" stroke-width="1.5" stroke-linecap="round"/>
+  <text x="124" y="126" text-anchor="middle" fill="#7B510B" font-family="Arial, sans-serif" font-size="8" font-weight="700">NO ESCUCHÉ</text>
+</svg>

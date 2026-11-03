@@ -1,8 +1,8 @@
 (function () {
   "use strict";
 
-  const CODIGO_DISPOSITIVO = "OIDO-001";
-  const NOMBRE_DISPOSITIVO = "Audiometría";
+  const CODIGO_DISPOSITIVO = "OIDO-PANTALLA-001";
+  const NOMBRE_DISPOSITIVO = "Respuestas en pantalla";
   const TIPO_DISPOSITIVO = "OIDO";
 
   // Frecuencias de estímulo en Hz (configurables; sin interpretación clínica).
@@ -13,8 +13,6 @@
   const VOLUMEN = 0.1; // Ganancia digital; no equivale a un nivel calibrado en dB SPL.
   const VOLUMEN_REDUCIDO = 0.01; // -20 dB respecto al volumen habitual.
   const PAUSA_ENTRE_TONOS_MS = 800;
-  const SONDEO_MS = 150;          // cada cuánto se consulta la respuesta del joystick
-
   const $ = (id) => document.getElementById(id);
   const raiz = $("oido-modulo");
 
@@ -32,16 +30,12 @@
 
   const estado = {
     episodioId: obtenerEpisodioId(),
-    dispositivoId: null,
-    cursor: 0,
+    dispositivoRegistroId: null,
     indice: 0,
     estimulos: [],
     ensayos: [],
-    porJoystick: 0,
-    porManual: 0,
     audio: null,
     resolver: null,
-    errorRed: false,
     formulario: null,
     nivelSenal: "NORMAL",
   };
@@ -151,12 +145,13 @@
     mostrar("paso-instrucciones");
   }
 
-  // ------------------------------------------------------------- dispositivo
+  // El API requiere asociar cada resultado a un dispositivo registrado.
+  // Este registro identifica el módulo web; no representa hardware conectado.
   function idDe(disp) {
     return disp.id_dispositivo !== undefined ? disp.id_dispositivo : disp.id;
   }
 
-  async function obtenerDispositivoId() {
+  async function obtenerDispositivoRegistroId() {
     const resp = await fetch("/api/v1/dispositivos");
     if (!resp.ok) throw new Error("No se pudo consultar la lista de dispositivos");
     const lista = await resp.json();
@@ -222,65 +217,13 @@
     osc.stop(t + duracion);
   }
 
-  // ---------------------------------------------------- respuestas del joystick
-  async function consultarRespuestas() {
-    const resp = await fetch(
-      "/api/v1/oido/respuestas/" + estado.dispositivoId + "?despues_de=" + estado.cursor
-    );
-    if (!resp.ok) throw new Error("sondeo " + resp.status);
-    return resp.json(); // { ultimo, respuestas: [{ seq, respuesta, ... }] }
-  }
-
-  function normalizarLado(valor) {
-    if (valor === "IZQUIERDO" || valor === "DERECHO" || valor === "NO_ESCUCHE") {
-      return valor;
-    }
-    if (valor === true) return "DERECHO";
-    if (valor === false) return "IZQUIERDO";
-    throw new Error("El joystick envió una respuesta desconocida");
-  }
-
-  // Descarta cualquier respuesta anterior al inicio del estímulo.
-  async function sincronizarCursor() {
-    const datos = await consultarRespuestas();
-    estado.cursor = datos.ultimo;
-  }
-
-  // Espera la primera respuesta nueva: del joystick (por la API) o del respaldo manual.
+  // La prueba avanza únicamente cuando la persona pulsa un botón en pantalla.
   function esperarRespuesta() {
     return new Promise((resolve) => {
-      let activo = true;
-      let consultando = false;
-
-      const terminar = (valor, fuente) => {
-        if (!activo) return;
-        activo = false;
-        clearInterval(temporizador);
+      estado.resolver = (valor) => {
         estado.resolver = null;
-        resolve({ valor: valor, fuente: fuente });
+        resolve(valor);
       };
-      estado.resolver = (valor) => terminar(valor, "manual");
-
-      const temporizador = setInterval(async () => {
-        if (!activo || consultando) return;
-        consultando = true;
-        try {
-          const datos = await consultarRespuestas();
-          if (estado.errorRed) {
-            estado.errorRed = false;
-            mensaje("");
-          }
-          if (activo && datos.respuestas.length > 0) {
-            estado.cursor = datos.ultimo; // descarta respuestas extra
-            terminar(normalizarLado(datos.respuestas[0].respuesta), "joystick");
-          }
-        } catch (_) {
-          estado.errorRed = true;
-          mensaje("Sin conexión con el servidor. Reintentando...", true);
-        } finally {
-          consultando = false;
-        }
-      }, SONDEO_MS);
     });
   }
 
@@ -301,8 +244,6 @@
     estado.indice = 0;
     estado.estimulos = crearOrdenEstimulos();
     estado.ensayos = [];
-    estado.porJoystick = 0;
-    estado.porManual = 0;
     $("progreso-total").textContent = String(estado.estimulos.length);
     $("tabla-respuestas").querySelector("tbody").innerHTML = "";
     $("estado-respuesta").textContent = "";
@@ -320,19 +261,16 @@
       estado.indice = i;
       const estimulo = estado.estimulos[i];
       actualizarEstimulo();
-      $("estado-respuesta").textContent = "Escuche el tono y responda con el joystick...";
+      $("estado-respuesta").textContent = "Escuche el tono y elija una respuesta en pantalla.";
 
-      await sincronizarCursor();
       reproducirTono(estimulo.frecuencia_hz, estimulo.lado_estimulo === "DERECHO" ? 0 : 1);
       const respuesta = await esperarRespuesta();
 
       estado.ensayos.push({
         frecuencia_hz: estimulo.frecuencia_hz,
         lado_estimulo: estimulo.lado_estimulo,
-        respuesta: respuesta.valor,
+        respuesta,
       });
-      if (respuesta.fuente === "manual") estado.porManual += 1;
-      else estado.porJoystick += 1;
 
       $("estado-respuesta").textContent = "Respuesta registrada.";
       await pausa(PAUSA_ENTRE_TONOS_MS);
@@ -346,8 +284,8 @@
     boton.disabled = true;
     reiniciar();
     try {
-      if (estado.dispositivoId === null) {
-        estado.dispositivoId = await obtenerDispositivoId();
+      if (estado.dispositivoRegistroId === null) {
+        estado.dispositivoRegistroId = await obtenerDispositivoRegistroId();
       }
       await prepararAudio();
       mostrar("paso-medicion");
@@ -387,9 +325,7 @@
   }
 
   function origenDeLosDatos() {
-    if (estado.porManual === 0) return "ESP32";
-    if (estado.porJoystick === 0) return "MANUAL";
-    return "MIXTO";
+    return "PANTALLA";
   }
 
   async function confirmar() {
@@ -397,15 +333,15 @@
     btn.disabled = true;
     mensaje("Guardando resultados...");
     try {
-      if (estado.dispositivoId === null) {
-        estado.dispositivoId = await obtenerDispositivoId();
+      if (estado.dispositivoRegistroId === null) {
+        estado.dispositivoRegistroId = await obtenerDispositivoRegistroId();
       }
       const resp = await fetch("/api/v1/oido/resultados", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           episodio_id: estado.episodioId,
-          dispositivo_id: estado.dispositivoId,
+          dispositivo_id: estado.dispositivoRegistroId,
           origen: origenDeLosDatos(),
           data: {
             ensayos: estado.ensayos,

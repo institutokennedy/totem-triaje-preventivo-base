@@ -1,4 +1,7 @@
+from datetime import date, datetime
+import re
 from types import SimpleNamespace
+from xml.etree import ElementTree
 
 from app.reporte.reporte import construir_reporte, render_html
 
@@ -40,14 +43,83 @@ def test_reporte_resume_answers_from_randomized_hearing_trials():
         [],
     )
 
+    assert reporte["resultados_auditivos"] == {
+        "frecuencias_hz": [500, 1000, 2000],
+        "resultados_oido_derecho": [None, True, None],
+        "resultados_oido_izquierdo": [True, None, False],
+        "origen": None,
+    }
     mediciones = dict(reporte["mediciones"])
-    assert mediciones["Respuestas que indicaron derecha"] == (
-        "1 respuesta señaló el lado derecho"
+    assert mediciones["Respuesta oído derecho"] == "500 Hz: Sin respuesta; 1000 Hz: Sí; 2000 Hz: Sin respuesta"
+    assert mediciones["Respuesta oído izquierdo"] == "500 Hz: Sí; 1000 Hz: Sin respuesta; 2000 Hz: No"
+
+
+def test_reporte_no_incluye_resultados_de_modulos_sin_mediciones_reales():
+    paciente = SimpleNamespace(
+        nombre="Paciente",
+        apellido="Ficticio",
+        fecha_nacimiento=None,
+        email=None,
     )
-    assert mediciones["Respuestas que indicaron izquierda"] == (
-        "1 respuesta señaló el lado izquierdo"
+    reporte = construir_reporte(
+        paciente,
+        {
+            "signos_vitales": [
+                {
+                    "data": {
+                        "presion_sistolica": 118.0,
+                        "presion_diastolica": 76.0,
+                        "frecuencia_cardiaca": 74.0,
+                        "temperatura": 36.5,
+                        "saturacion_oxigeno": 98.0,
+                    }
+                }
+            ],
+            "ecg": [
+                {
+                    "data": {
+                        "frecuencia_muestreo_hz": 250,
+                        "muestras": [0.02, 0.08, 0.31],
+                        "unidad": "mV",
+                    }
+                }
+            ],
+        },
+        [],
     )
-    assert mediciones["Tonos que la persona indicó no escuchar"] == "1"
+
+    assert reporte["mediciones"] == []
+    html = render_html(reporte)
+    assert "Resultados reales registrados" not in html
+    assert "118.0" not in html
+    assert "0.31" not in html
+
+
+def test_reporte_usa_los_datos_personales_registrados_del_paciente():
+    paciente = SimpleNamespace(
+        nombre="Ana",
+        apellido="García",
+        dni="30123456",
+        fecha_nacimiento=date(2000, 5, 6),
+        email="ana@example.test",
+        telefono="3515551234",
+    )
+
+    reporte = construir_reporte(
+        paciente, {}, [], ahora=datetime(2026, 11, 3, 10, 15)
+    )
+
+    datos_personales = dict(reporte["paciente"])
+    assert datos_personales["Nombre Completo"] == "Ana García"
+    assert datos_personales["DNI"] == "30123456"
+    assert datos_personales["Fecha de nacimiento"] == "06/05/2000"
+    assert datos_personales["Fecha/Hora"] == "03/11/2026 10:15"
+    assert datos_personales["Correo"] == "ana@example.test"
+    assert datos_personales["Teléfono"] == "3515551234"
+
+    html = render_html(reporte)
+    for dato in ("Ana García", "30123456", "06/05/2000", "ana@example.test", "3515551234"):
+        assert dato in html
 
 
 def test_reporte_incluye_diagrama_de_audiometria():
@@ -77,12 +149,37 @@ def test_reporte_incluye_diagrama_de_audiometria():
     assert reporte["audiometria"]["frecuencias_hz"] == [250, 500, 1000, 2000, 4000, 8000]
     assert len(reporte["audiometria"]["derecho"]) == 6
     assert len(reporte["audiometria"]["izquierdo"]) == 6
+    assert reporte["resultados_auditivos"]["resultados_oido_derecho"] == [
+        True, True, False, False, False, False
+    ]
+    assert reporte["resultados_auditivos"]["resultados_oido_izquierdo"] == [
+        False, True, True, False, False, True
+    ]
 
     html = render_html(reporte)
     assert "Oído derecho" in html
     assert "Oído izquierdo" in html
-    assert "Se escucha" in html
-    assert "No se escucha" in html
+    assert "Percibido" in html
+    assert "No percibido" in html
+    assert "no representa umbrales en db hl" in html.lower()
+    assert "Límite normal (20 dB)" not in html
+    assert html.count("Detalle por frecuencia") == 2
+    assert html.count("Se escucha") == 2
+    assert html.count("No se escucha") == 2
+    assert html.count("audicion-frecuencia si") == 5
+    assert html.count("audicion-frecuencia no") == 7
+    assert "250 Hz" in html
+    assert "Resultados reales registrados · Audiometría" in html
+    assert "Frecuencia Cardíaca" not in html
+    assert "Presión Arterial" not in html
+    etiquetas_medicion = {etiqueta for etiqueta, _ in reporte["mediciones"]}
+    assert etiquetas_medicion == {
+        "Frecuencias evaluadas",
+        "Respuesta oído derecho",
+        "Respuesta oído izquierdo",
+    }
+    for svg in re.findall(r"<svg\b.*?</svg>", html, flags=re.DOTALL):
+        ElementTree.fromstring(svg)
 
 
 def test_reporte_incluye_formulario_del_oido_al_final():
@@ -118,6 +215,8 @@ def test_reporte_incluye_formulario_del_oido_al_final():
     assert "¿Presenta algún problema o inconveniente de audición?" in html
     assert "Hipoacusia" in html
     assert "Diabetes" in html
+    assert html.index("Resultado preventivo general") < html.index("Observaciones / alertas")
+    assert html.index("Observaciones / alertas") < html.index("Formulario")
 
 
 def test_reporte_no_marca_como_escucha_si_responde_lado_equivocado():
@@ -147,5 +246,52 @@ def test_reporte_no_marca_como_escucha_si_responde_lado_equivocado():
         [],
     )
 
-    assert reporte["audiometria"]["derecho"][0]["escucha"] is False
-    assert reporte["audiometria"]["izquierdo"][0]["escucha"] is False
+    assert reporte["audiometria"]["derecho"][0]["respuesta"] == "LADO_OPUESTO"
+    assert reporte["audiometria"]["izquierdo"][0]["respuesta"] is None
+    assert reporte["resultados_auditivos"]["resultados_oido_derecho"] == [True]
+
+
+def test_diagrama_muestra_localizacion_correcta_y_no_escuche_por_frecuencia():
+    paciente = SimpleNamespace(
+        nombre="Paciente",
+        apellido="Ficticio",
+        fecha_nacimiento=None,
+        email=None,
+    )
+    reporte = construir_reporte(
+        paciente,
+        {
+            "oido": [
+                {
+                    "data": {
+                        "ensayos": [
+                            {
+                                "frecuencia_hz": 1000,
+                                "lado_estimulo": "DERECHO",
+                                "respuesta": "DERECHO",
+                            },
+                            {
+                                "frecuencia_hz": 1000,
+                                "lado_estimulo": "IZQUIERDO",
+                                "respuesta": "NO_ESCUCHE",
+                            },
+                        ]
+                    }
+                }
+            ]
+        },
+        [],
+    )
+
+    audiometria = reporte["audiometria"]
+    assert audiometria["derecho"][0]["respuesta"] == "CORRECTA"
+    assert audiometria["izquierdo"][0]["respuesta"] == "NO_ESCUCHE"
+    assert "db" not in audiometria["derecho"][0]
+    html = render_html(reporte)
+    assert "Lado correcto" in html
+    assert "No escuchó" in html
+    assert html.count("audicion-frecuencia si") == 1
+    assert html.count("audicion-frecuencia no") == 1
+    assert "Sin resp.</div>" not in html
+    assert html.index("Detalle por frecuencia") < html.index("Resultado preventivo general")
+    assert html.index("Resultado preventivo general") < html.index("Observaciones / alertas")

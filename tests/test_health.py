@@ -13,12 +13,22 @@ def test_swagger_openapi_incluye_las_rutas(client):
     openapi_response = client.get("/openapi.json")
 
     assert docs_response.status_code == 200
+    assert "Explorador de API" in docs_response.text
+    assert "Estado del servicio" in docs_response.text
+    assert "/static/css/api-docs.css" in docs_response.text
     assert openapi_response.status_code == 200
     paths = openapi_response.json()["paths"]
     assert "/health" in paths
     assert "/api/v1/demo-ambiente/resultados" in paths
     assert "/api/v1/demo-ambiente/resultados/{episodio_id}" in paths
     assert "/api/v1/demo-ambiente/simular" not in paths
+
+
+def test_estilos_de_documentacion_api_disponibles(client):
+    response = client.get("/static/css/api-docs.css")
+
+    assert response.status_code == 200
+    assert ".swagger-ui .opblock" in response.text
 
 
 def test_lifespan_crea_tablas_comunes_e_informe(client, test_engine):

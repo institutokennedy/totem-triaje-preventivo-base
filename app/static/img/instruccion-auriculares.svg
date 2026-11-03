@@ -1,10 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" fill="none">
-  <rect x="1" y="1" width="158" height="118" rx="18" fill="#E8F2EF"/>
-  <path d="M37 68V57c0-25 18-43 43-43s43 18 43 43v11" stroke="#087E72" stroke-width="9" stroke-linecap="round"/>
-  <path d="M48 58v31c0 6-5 11-11 11s-11-5-11-11V69c0-6 5-11 11-11h11Zm64 0h11c6 0 11 5 11 11v20c0 6-5 11-11 11s-11-5-11-11V58Z" fill="#087E72"/>
-  <path d="M59 60v21c0 17 9 27 21 27s21-10 21-27V60" stroke="#C65A45" stroke-width="5" stroke-linecap="round"/>
-  <circle cx="80" cy="50" r="20" fill="#F2C9AD"/>
-  <path d="M61 49c2-13 9-20 19-20 11 0 18 7 20 20-7-5-13-11-15-16-5 7-13 12-24 16Z" fill="#17332F"/>
-  <path d="M72 51h1m14 0h1" stroke="#17332F" stroke-width="3" stroke-linecap="round"/>
-  <path d="M75 60c3 2 7 2 10 0" stroke="#C65A45" stroke-width="2.5" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Colocarse los auriculares estéreo</title>
+  <desc id="desc">Una persona usa auriculares sobre ambas orejas; unas flechas indican ajustarlos cómodamente.</desc>
+  <rect x="1" y="1" width="238" height="158" rx="22" fill="#F0F7F4"/>
+  <circle cx="120" cy="82" r="61" fill="#E0EFE9"/>
+  <path d="M75 143c4-22 20-34 45-34s41 12 45 34" fill="#087E72"/>
+  <path d="M93 111c3 12 13 19 27 19s24-7 27-19l-13-10h-28l-13 10Z" fill="#F2C9AD"/>
+  <path d="M83 76c0-27 16-45 38-45 23 0 39 18 39 45v18c0 25-17 42-39 42S83 119 83 94V76Z" fill="#F2C9AD"/>
+  <path d="M82 75c1-28 15-48 40-48 23 0 38 17 40 46-9-6-16-16-19-25-10 11-27 18-51 20l-10 7Z" fill="#17332F"/>
+  <path d="M104 79h1m29 0h1" stroke="#17332F" stroke-width="4" stroke-linecap="round"/>
+  <path d="M114 100c4 3 10 3 14 0" stroke="#A44434" stroke-width="3" stroke-linecap="round"/>
+  <path d="M73 80V70c0-29 19-51 47-51s47 22 47 51v10" stroke="#087E72" stroke-width="10" stroke-linecap="round"/>
+  <rect x="66" y="73" width="19" height="42" rx="9.5" fill="#05645B"/>
+  <rect x="155" y="73" width="19" height="42" rx="9.5" fill="#05645B"/>
+  <rect x="70" y="81" width="11" height="25" rx="5.5" fill="#44A99C"/>
+  <rect x="159" y="81" width="11" height="25" rx="5.5" fill="#44A99C"/>
+  <path d="M45 77c-7 8-7 19 0 27m150-27c7 8 7 19 0 27" stroke="#E8A23A" stroke-width="4" stroke-linecap="round"/>
+  <path d="m41 73 4 4 4-4m142 35 4-4 4 4" stroke="#E8A23A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

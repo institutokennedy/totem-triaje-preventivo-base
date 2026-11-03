@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Resumen de Atención{% endblock %}
+
+{% block content %}
+<style>
+  .resumen { max-width: 960px; margin: 0 auto; padding: 1rem; font-family: system-ui, sans-serif; }
+  .ficha { background: #f4f6f8; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
+  .ficha dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0; }
+  .ficha dt { font-weight: 600; }
+  .ficha dd { margin: 0; }
+  .timeline { list-style: none; margin: 0 0 1.5rem; padding: 0 0 0 1.25rem; border-left: 3px solid #cfd8dc; }
+  .timeline li { position: relative; margin: 0 0 .75rem; padding-left: .75rem; }
+  .timeline li::before { content: ""; position: absolute; left: -1.7rem; top: .35rem; width: 12px; height: 12px; border-radius: 50%; background: #b0bec5; }
+  .timeline li.ok::before { background: #2e7d32; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+  .card { border-radius: 10px; padding: 1rem; border: 2px solid; }
+  .card.completado { background: #e8f5e9; border-color: #2e7d32; color: #1b5e20; }
+  .card.pendiente { background: #eceff1; border-color: #90a4ae; color: #546e7a; }
+  .card h3 { margin: 0 0 .25rem; text-transform: capitalize; }
+  .card pre { white-space: pre-wrap; font-size: .8rem; margin: .5rem 0 0; }
+  .acciones { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .acciones button { font-size: 1.1rem; padding: .8rem 1.4rem; border: 0; border-radius: 8px; cursor: pointer; color: #fff; }
+  #btn-generar { background: #1565c0; }
+  #btn-finalizar { background: #2e7d32; }
+  .acciones button:disabled { opacity: .5; cursor: not-allowed; }
+  #mensaje { min-height: 1.5rem; font-weight: 600; }
+  .legal { border-top: 1px solid #cfd8dc; padding-top: .75rem; font-size: .9rem; color: #455a64; }
+</style>
+
+<main class="resumen" data-episodio-id="{{ episodio_id }}">
+  <h1>Resumen de Atención</h1>
+
+  <section class="ficha" aria-labelledby="ficha-titulo">
+    <h2 id="ficha-titulo">Ficha del paciente</h2>
+    <dl>
+      <dt>Paciente</dt><dd id="paciente-nombre">—</dd>
+      <dt>DNI</dt><dd id="paciente-dni">—</dd>
+      <dt>Episodio</dt><dd id="episodio-id">{{ episodio_id }}</dd>
+      <dt>Circuito</dt><dd id="circuito">—</dd>
+      <dt>Estado</dt><dd id="estado-episodio">—</dd>
+      <dt>Clasificación</dt><dd id="clasificacion">—</dd>
+    </dl>
+  </section>
+
+  <section aria-labelledby="timeline-titulo">
+    <h2 id="timeline-titulo">Línea de tiempo del episodio</h2>
+    <ol class="timeline" id="timeline"></ol>
+  </section>
+
+  <section aria-labelledby="modulos-titulo">
+    <h2 id="modulos-titulo">Estado de los módulos</h2>
+    <div class="cards" id="cards-modulos"></div>
+  </section>
+
+  <div class="acciones">
+    <button id="btn-generar" type="button">Generar Informe Final</button>
+    <button id="btn-finalizar" type="button" disabled>Finalizar Atención</button>
+  </div>
+  <p id="mensaje" role="status" aria-live="polite"></p>
+  <nav id="enlaces-informe" aria-label="Acciones del informe" hidden>
+    <a id="enlace-informe" href="#" target="_blank" rel="noopener">Abrir informe</a>
+    <a id="enlace-imprimir" href="#" target="_blank" rel="noopener">Imprimir o guardar como PDF</a>
+  </nav>
+
+  <footer class="legal" id="advertencia-legal">
+    Informe preventivo. No constituye un diagnóstico médico.
+  </footer>
+</main>
+
+<script src="{{ url_for('unificacion_resumen_js') }}"></script>
+{% endblock %}

@@ -14,17 +14,6 @@ TITULO = "REPORTE PREVENTIVO DE TRIAJE"
 SUBTITULO = "Tótem de Triaje Inteligente - Sistema de Monitoreo Escolar"
 NO_REGISTRADO = "No registrado"
 
-# (etiqueta, claves candidatas en data_json, unidad). Orden = orden de lectura (2 columnas).
-CAMPOS_MEDICIONES = [
-    ("Frecuencia Cardíaca", ("frecuencia_cardiaca", "fc", "bpm", "lpm"), "lpm"),
-    ("Presión Arterial", None, ""),  # caso especial: sistólica/diastólica
-    ("Saturación de Oxígeno (SpO2)", ("spo2", "saturacion_oxigeno", "saturacion"), "%"),
-    ("Temperatura Corporal", ("temperatura_corporal", "temperatura", "temp"), "°C"),
-    ("Peso", ("peso_kg", "peso"), "kg"),
-    ("Altura", ("altura_cm", "altura", "talla_cm", "talla"), "cm"),
-    ("Calidad de ECG", ("calidad_ecg", "ecg_calidad"), ""),
-]
-
 NOMBRES_SUBINDICES = {
     "cardiovascular": "Cardiovascular",
     "termico": "Térmico",
@@ -41,38 +30,6 @@ COLOR_PENDIENTE = ("#e2e8f0", "#475569")
 
 
 # ------------------------------------------------------------------ utilidades
-def _buscar(por_modulo: dict, claves) -> object:
-    """Devuelve el primer valor encontrado (registro más reciente primero)."""
-    for registros in por_modulo.values():
-        for reg in reversed(registros):
-            datos = reg.get("data")
-            if not isinstance(datos, dict):
-                continue
-            niveles = [datos] + [v for v in datos.values() if isinstance(v, dict)]
-            for nivel in niveles:
-                for clave in claves:
-                    if nivel.get(clave) is not None:
-                        return nivel[clave]
-    return None
-
-
-def _con_unidad(valor, unidad: str) -> str:
-    if valor is None:
-        return NO_REGISTRADO
-    return f"{valor} {unidad}".strip()
-
-
-def _presion(por_modulo: dict) -> str:
-    texto = _buscar(por_modulo, ("presion_arterial", "presion"))
-    if texto is not None:
-        return str(texto) if "mmHg" in str(texto) else f"{texto} mmHg"
-    sis = _buscar(por_modulo, ("presion_sistolica", "sistolica"))
-    dia = _buscar(por_modulo, ("presion_diastolica", "diastolica"))
-    if sis is not None and dia is not None:
-        return f"{sis}/{dia} mmHg"
-    return NO_REGISTRADO
-
-
 def _edad(paciente) -> str:
     nacimiento = getattr(paciente, "fecha_nacimiento", None)
     if isinstance(nacimiento, str):
@@ -85,37 +42,6 @@ def _edad(paciente) -> str:
     hoy = date.today()
     anios = hoy.year - nacimiento.year - ((hoy.month, hoy.day) < (nacimiento.month, nacimiento.day))
     return f"{anios} años"
-
-
-def _resumen_oido(por_modulo: dict):
-    """Devuelve (texto_derecho, texto_izquierdo) a partir del último registro de oído."""
-    registros = por_modulo.get("oido")
-    datos = registros[-1].get("data") if registros else None
-    if not isinstance(datos, dict):
-        return NO_REGISTRADO, NO_REGISTRADO
-    ensayos = datos.get("ensayos")
-    if isinstance(ensayos, list):
-        der = sum(
-            1
-            for ensayo in ensayos
-            if isinstance(ensayo, dict) and ensayo.get("respuesta") == "DERECHO"
-        )
-        izq = sum(
-            1
-            for ensayo in ensayos
-            if isinstance(ensayo, dict) and ensayo.get("respuesta") == "IZQUIERDO"
-        )
-        return (
-            f"{der} {'respuesta señaló' if der == 1 else 'respuestas señalaron'} el lado derecho",
-            f"{izq} {'respuesta señaló' if izq == 1 else 'respuestas señalaron'} el lado izquierdo",
-        )
-    n = len(datos.get("frecuencias_hz", []))
-    der = sum(1 for x in datos.get("resultados_oido_derecho", []) if x is True)
-    izq = sum(1 for x in datos.get("resultados_oido_izquierdo", []) if x is True)
-    return (
-        f"{der} de {n} frecuencias con respuesta",
-        f"{izq} de {n} frecuencias con respuesta",
-    )
 
 
 def _datos_triaje(por_modulo: dict) -> dict:
@@ -135,169 +61,333 @@ def _lista(valor) -> list:
     return [str(v) for v in valor]
 
 
-def _normalizar_audiometria(datos_oido: dict | None) -> dict:
-    """Arma una estructura gráfica para dibujar un audiograma."""
+def _resultados_reales_oido(datos_oido: dict | None, origen: str | None) -> dict | None:
+    """Normaliza únicamente respuestas que realmente fueron guardadas por la prueba."""
     if not isinstance(datos_oido, dict):
-        return {"frecuencias_hz": [], "derecho": [], "izquierdo": []}
+        return None
 
-    frecuencias = datos_oido.get("frecuencias_hz") or []
-    if not frecuencias and isinstance(datos_oido.get("ensayos"), list):
-        frecuencias = []
-        vistos = set()
-        for ensayo in datos_oido["ensayos"]:
-            if not isinstance(ensayo, dict):
-                continue
-            fq = ensayo.get("frecuencia_hz")
-            if fq is None:
-                continue
-            if fq not in vistos:
-                vistos.add(fq)
-                frecuencias.append(int(fq))
-        frecuencias = sorted(frecuencias)
+    ensayos = datos_oido.get("ensayos")
+    frecuencias_legacy = datos_oido.get("frecuencias_hz") or []
+    ensayos_validos = []
+    if isinstance(ensayos, list):
+        ensayos_validos = [
+            ensayo
+            for ensayo in ensayos
+            if isinstance(ensayo, dict)
+            and isinstance(ensayo.get("frecuencia_hz"), int)
+            and not isinstance(ensayo.get("frecuencia_hz"), bool)
+            and ensayo["frecuencia_hz"] > 0
+            and ensayo.get("lado_estimulo") in ("DERECHO", "IZQUIERDO")
+            and ensayo.get("respuesta") in ("DERECHO", "IZQUIERDO", "NO_ESCUCHE")
+        ]
 
-    if not frecuencias:
-        return {"frecuencias_hz": [], "derecho": [], "izquierdo": []}
-
-    derivado = {"DERECHO": [False] * len(frecuencias), "IZQUIERDO": [False] * len(frecuencias)}
-    if isinstance(datos_oido.get("resultados_oido_derecho"), list) and isinstance(datos_oido.get("resultados_oido_izquierdo"), list):
-        der = datos_oido.get("resultados_oido_derecho", [])
-        izq = datos_oido.get("resultados_oido_izquierdo", [])
-        for idx in range(min(len(frecuencias), len(der), len(izq))):
-            derivado["DERECHO"][idx] = bool(der[idx])
-            derivado["IZQUIERDO"][idx] = bool(izq[idx])
-    elif isinstance(datos_oido.get("ensayos"), list):
-        for ensayo in datos_oido["ensayos"]:
-            if not isinstance(ensayo, dict):
-                continue
-            fq = ensayo.get("frecuencia_hz")
-            lado = ensayo.get("lado_estimulo")
-            respuesta = ensayo.get("respuesta")
-            if fq is None or lado not in ("DERECHO", "IZQUIERDO"):
-                continue
-            try:
-                idx = frecuencias.index(int(fq))
-            except ValueError:
-                continue
-            escucho = respuesta == lado and respuesta not in (None, "NO_ESCUCHE")
-            derivado[lado][idx] = escucho
-
-    def _series(lado):
-        puntos = []
-        for idx, fq in enumerate(frecuencias):
-            puntos.append(
-                {
-                    "frecuencia_hz": int(fq),
-                    "db": 10 + idx * 12,
-                    "escucha": bool(derivado[lado][idx]),
-                }
+    if ensayos_validos:
+        frecuencias = sorted({ensayo["frecuencia_hz"] for ensayo in ensayos_validos})
+        percibidos = {
+            lado: {frecuencia: None for frecuencia in frecuencias}
+            for lado in ("DERECHO", "IZQUIERDO")
+        }
+        for ensayo in ensayos_validos:
+            percibidos[ensayo["lado_estimulo"]][ensayo["frecuencia_hz"]] = (
+                ensayo["respuesta"] != "NO_ESCUCHE"
             )
-        return puntos
+        resultados = {
+            "derecho": [percibidos["DERECHO"][frecuencia] for frecuencia in frecuencias],
+            "izquierdo": [percibidos["IZQUIERDO"][frecuencia] for frecuencia in frecuencias],
+        }
+    else:
+        if not isinstance(frecuencias_legacy, list):
+            return None
+        frecuencias_origen = [
+            frecuencia
+            for frecuencia in frecuencias_legacy
+            if isinstance(frecuencia, int)
+            and not isinstance(frecuencia, bool)
+            and frecuencia > 0
+        ]
+        frecuencias = sorted(set(frecuencias_origen))
+        if not frecuencias:
+            return None
+        resultados = {}
+        for lado, campo in (
+            ("derecho", "resultados_oido_derecho"),
+            ("izquierdo", "resultados_oido_izquierdo"),
+        ):
+            valores = datos_oido.get(campo)
+            por_frecuencia = {}
+            if isinstance(valores, list):
+                por_frecuencia = {
+                    frecuencia: valor
+                    for frecuencia, valor in zip(frecuencias_legacy, valores)
+                    if isinstance(frecuencia, int)
+                    and not isinstance(frecuencia, bool)
+                    and frecuencia in frecuencias
+                    and isinstance(valor, bool)
+                }
+            resultados[lado] = [
+                por_frecuencia.get(frecuencia) for frecuencia in frecuencias
+            ]
 
     return {
-        "frecuencias_hz": [int(f) for f in frecuencias],
+        "frecuencias_hz": frecuencias,
+        "resultados_oido_derecho": resultados["derecho"],
+        "resultados_oido_izquierdo": resultados["izquierdo"],
+        "origen": origen,
+    }
+
+
+def _normalizar_audiometria(datos_oido: dict | None) -> dict:
+    """Prepara respuestas por lado y frecuencia sin inferir umbrales en dB HL."""
+    if not isinstance(datos_oido, dict):
+        return {"frecuencias_hz": [], "derecho": [], "izquierdo": [], "modo": "localizacion"}
+
+    ensayos = datos_oido.get("ensayos")
+    frecuencias = []
+    frecuencias_legacy = datos_oido.get("frecuencias_hz") or []
+    if isinstance(ensayos, list):
+        for ensayo in ensayos:
+            if not isinstance(ensayo, dict):
+                continue
+            frecuencia = ensayo.get("frecuencia_hz")
+            if isinstance(frecuencia, int) and not isinstance(frecuencia, bool) and frecuencia > 0:
+                frecuencias.append(frecuencia)
+    if not frecuencias:
+        for frecuencia in frecuencias_legacy:
+            if isinstance(frecuencia, int) and not isinstance(frecuencia, bool) and frecuencia > 0:
+                frecuencias.append(frecuencia)
+    frecuencias = sorted(set(frecuencias))
+
+    modo = "localizacion" if isinstance(ensayos, list) else "deteccion"
+    resultados = {
+        lado: {frecuencia: None for frecuencia in frecuencias}
+        for lado in ("DERECHO", "IZQUIERDO")
+    }
+    if modo == "localizacion":
+        for ensayo in datos_oido["ensayos"]:
+            if not isinstance(ensayo, dict):
+                continue
+            frecuencia = ensayo.get("frecuencia_hz")
+            lado_estimulo = ensayo.get("lado_estimulo")
+            respuesta = ensayo.get("respuesta")
+            if frecuencia not in frecuencias or lado_estimulo not in resultados:
+                continue
+            if respuesta == lado_estimulo:
+                resultado = "CORRECTA"
+            elif respuesta in ("DERECHO", "IZQUIERDO"):
+                resultado = "LADO_OPUESTO"
+            elif respuesta == "NO_ESCUCHE":
+                resultado = "NO_ESCUCHE"
+            else:
+                continue
+            resultados[lado_estimulo][frecuencia] = resultado
+    else:
+        derecha = datos_oido.get("resultados_oido_derecho")
+        izquierda = datos_oido.get("resultados_oido_izquierdo")
+        for lado, valores in (("DERECHO", derecha), ("IZQUIERDO", izquierda)):
+            if not isinstance(valores, list):
+                continue
+            for frecuencia, valor in zip(frecuencias_legacy, valores):
+                if (
+                    isinstance(frecuencia, int)
+                    and not isinstance(frecuencia, bool)
+                    and frecuencia in resultados[lado]
+                    and isinstance(valor, bool)
+                ):
+                    resultados[lado][frecuencia] = (
+                        "PERCIBIDO" if valor else "NO_PERCIBIDO"
+                    )
+
+    def _series(lado):
+        return [
+            {"frecuencia_hz": frecuencia, "respuesta": resultados[lado][frecuencia]}
+            for frecuencia in frecuencias
+        ]
+
+    return {
+        "frecuencias_hz": frecuencias,
         "derecho": _series("DERECHO"),
         "izquierdo": _series("IZQUIERDO"),
+        "modo": modo,
     }
 
 
 def _audiometria_svg(audiometria: dict) -> str:
-    """Genera dos gráficos de audiometría individuales con cuadrados de audio."""
+    """Dibuja resultados auditivos por frecuencia, sin simular valores dB HL."""
     frecuencias = audiometria.get("frecuencias_hz") or []
     derecha = audiometria.get("derecho") or []
     izquierda = audiometria.get("izquierdo") or []
     if not frecuencias:
         return "<p>No hay datos de audiometría para representar.</p>"
 
-    def _ear_svg(label, serie, color):
-        ancho = 280
-        alto = 220
-        margen_izq = 28
-        margen_der = 14
-        margen_top = 16
-        margen_bottom = 28
+    modo = audiometria.get("modo", "localizacion")
+    categorias = (
+        [
+            ("CORRECTA", "Lado correcto"),
+            ("LADO_OPUESTO", "Lado opuesto"),
+            ("NO_ESCUCHE", "No escuchó"),
+        ]
+        if modo == "localizacion"
+        else [("PERCIBIDO", "Percibido"), ("NO_PERCIBIDO", "No percibido")]
+    )
+    pie = (
+        "La posición vertical muestra la respuesta de localización, no un umbral."
+        if modo == "localizacion"
+        else "Resultado de detección registrado en el formato anterior."
+    )
+
+    def _ear_svg(label, serie, color, marcador):
+        ancho = 640
+        alto = 340
+        margen_izq = 142
+        margen_der = 22
+        margen_top = 42
+        margen_bottom = 66
         inner_w = ancho - margen_izq - margen_der
         inner_h = alto - margen_top - margen_bottom
-        y_min = 0
-        y_max = 110
+        frecuencia_posicion = {frecuencia: indice for indice, frecuencia in enumerate(frecuencias)}
+        categoria_posicion = {
+            codigo: margen_top + (indice + 0.5) * inner_h / len(categorias)
+            for indice, (codigo, _) in enumerate(categorias)
+        }
 
         def x_para(fq):
             if len(frecuencias) <= 1:
                 return margen_izq + inner_w / 2
-            idx = frecuencias.index(int(fq)) if int(fq) in frecuencias else 0
+            idx = frecuencia_posicion.get(int(fq), 0)
             return margen_izq + (idx / (len(frecuencias) - 1)) * inner_w
 
-        def y_para(db):
-            return margen_top + (1 - (db - y_min) / (y_max - y_min)) * inner_h
-
+        bandas = []
+        etiquetas_y = []
+        for indice, (codigo, etiqueta) in enumerate(categorias):
+            y0 = margen_top + indice * inner_h / len(categorias)
+            y1 = margen_top + (indice + 1) * inner_h / len(categorias)
+            fondo = "#f8fafc" if indice % 2 == 0 else "#ffffff"
+            bandas.append(
+                f'<rect x="{margen_izq}" y="{y0:.1f}" width="{inner_w:.1f}" height="{y1-y0:.1f}" fill="{fondo}" />'
+            )
+            etiquetas_y.append(
+                f'<text x="{margen_izq-12}" y="{(y0+y1)/2+4:.1f}" '
+                f'font-size="13" fill="#475569" text-anchor="end">{etiqueta}</text>'
+            )
+            bandas.append(
+                f'<line x1="{margen_izq}" y1="{y1:.1f}" x2="{ancho-margen_der}" y2="{y1:.1f}" '
+                f'stroke="#dbe4ee" stroke-width="1" />'
+            )
+        rejilla_x = []
+        etiquetas_x = []
+        for frecuencia in frecuencias:
+            x = x_para(frecuencia)
+            rejilla_x.append(
+                f'<line x1="{x:.1f}" y1="{margen_top}" x2="{x:.1f}" y2="{alto-margen_bottom}" '
+                'stroke="#e2e8f0" stroke-width="1" stroke-dasharray="3 4" />'
+            )
+            etiquetas_x.append(
+                f'<text x="{x:.1f}" y="{alto-margen_bottom+22}" font-size="12" '
+                f'fill="#334155" text-anchor="middle">{frecuencia}</text>'
+            )
         puntos = []
         for punto in serie:
-            fq = punto.get("frecuencia_hz")
-            db = punto.get("db")
-            if fq is None or db is None:
+            frecuencia = punto.get("frecuencia_hz")
+            respuesta = punto.get("respuesta")
+            if frecuencia not in frecuencia_posicion or respuesta not in categoria_posicion:
                 continue
-            x = x_para(fq)
-            y = y_para(db)
-            puntos.append((x, y, punto.get("escucha", False)))
+            puntos.append((x_para(frecuencia), categoria_posicion[respuesta]))
 
-        line_points = " ".join(f"{x:.1f},{y:.1f}" for x, y, _ in puntos)
-        circulos = []
-        cruzes = []
-        for x, y, escucha in puntos:
-            if escucha:
-                circulos.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="{color}" stroke="#ffffff" stroke-width="2" />')
-            else:
-                cruzes.append(f'<line x1="{x-6:.1f}" y1="{y-6:.1f}" x2="{x+6:.1f}" y2="{y+6:.1f}" stroke="{color}" stroke-width="2" />')
-                cruzes.append(f'<line x1="{x+6:.1f}" y1="{y-6:.1f}" x2="{x-6:.1f}" y2="{y+6:.1f}" stroke="{color}" stroke-width="2" />')
-
-        grid = []
-        for nivel in range(0, 111, 10):
-            y = y_para(nivel)
-            grid.append(f'<line x1="{margen_izq}" y1="{y}" x2="{ancho-margen_der}" y2="{y}" stroke="#dfe7f5" stroke-width="1" />')
-            grid.append(f'<text x="{margen_izq-8}" y="{y+3}" font-size="9" fill="#64748b" text-anchor="end">{nivel}</text>')
-
-        x_labels = []
-        for fq in frecuencias:
-            x = x_para(fq)
-            x_labels.append(f'<text x="{x}" y="{alto-8}" font-size="9" fill="#475569" text-anchor="middle">{fq}</text>')
-
-        boxes = []
-        for punto in serie:
-            fq = punto.get("frecuencia_hz")
-            escucha = bool(punto.get("escucha", False))
-            if fq is None:
-                continue
-            class_name = "si" if escucha else "no"
-            boxes.append(
-                f'<div class="freq-box {class_name}"><span class="freq">{fq}Hz</span><div>{"Sí" if escucha else "No"}</div></div>'
+        trazado = ""
+        if len(puntos) > 1:
+            coords = " ".join(f"{x:.1f},{y:.1f}" for x, y in puntos)
+            trazado = (
+                f'<polyline points="{coords}" fill="none" stroke="{color}" '
+                'stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity=".8" />'
             )
+        marcadores = []
+        for x, y in puntos:
+            if marcador == "circulo":
+                marcadores.append(
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="7" fill="{color}" stroke="#ffffff" stroke-width="2" />'
+                )
+            else:
+                marcadores.append(
+                    f'<path d="M{x-7:.1f},{y-7:.1f} L{x+7:.1f},{y+7:.1f} '
+                    f'M{x+7:.1f},{y-7:.1f} L{x-7:.1f},{y+7:.1f}" '
+                    f'fill="none" stroke="{color}" stroke-width="3" stroke-linecap="round" />'
+                )
 
+        clase_lado = "derecho" if marcador == "circulo" else "izquierdo"
+        etiquetas_respuesta = {
+            "CORRECTA": ("Lado correcto", "correcta"),
+            "LADO_OPUESTO": ("Lado opuesto", "lado-opuesto"),
+            "NO_ESCUCHE": ("No escuchó", "no-escuche"),
+            "PERCIBIDO": ("Percibido", "percibido"),
+            "NO_PERCIBIDO": ("No percibido", "no-percibido"),
+        }
+        tarjetas_frecuencia = []
+        for punto in serie:
+            etiqueta, clase = etiquetas_respuesta.get(
+                punto.get("respuesta"), ("Sin respuesta", "")
+            )
+            tarjetas_frecuencia.append(
+                f'<div class="freq-box {clase}">'
+                f'<strong>{escape(str(punto.get("frecuencia_hz")))} Hz</strong>'
+                f'{escape(etiqueta)}</div>'
+            )
+        detalle_frecuencias = "".join(tarjetas_frecuencia)
+        resultados_audicion = []
+        for punto in serie:
+            respuesta = punto.get("respuesta")
+            if respuesta in ("CORRECTA", "LADO_OPUESTO", "PERCIBIDO"):
+                etiqueta_audicion, clase_audicion = "Sí", "si"
+            elif respuesta in ("NO_ESCUCHE", "NO_PERCIBIDO"):
+                etiqueta_audicion, clase_audicion = "No", "no"
+            else:
+                etiqueta_audicion, clase_audicion = "Sin resp.", ""
+            resultados_audicion.append(
+                f'<div class="audicion-frecuencia {clase_audicion}">'
+                f'<strong>{escape(str(punto.get("frecuencia_hz")))} Hz</strong>'
+                f'{etiqueta_audicion}</div>'
+            )
+        resumen_audicion = "".join(resultados_audicion)
         return (
-            '<div class="audiometria-ear">'
-            f'<div class="audiometria-header">{label}</div>'
-            f'<svg viewBox="0 0 {ancho} {alto}" width="100%" height="220" role="img" aria-label="{label}">'
-            f'<line x1="{margen_izq}" y1="{margen_top}" x2="{margen_izq}" y2="{alto-margen_bottom}" stroke="#475569" stroke-width="1.2" />'
-            f'<line x1="{margen_izq}" y1="{alto-margen_bottom}" x2="{ancho-margen_der}" y2="{alto-margen_bottom}" stroke="#475569" stroke-width="1.2" />'
-            f'{"".join(grid)}'
-            f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{line_points}" stroke-linecap="round" stroke-linejoin="round" />'
-            f'{"".join(circulos)}'
-            f'{"".join(cruzes)}'
-            f'{"".join(x_labels)}'
-            f'<text x="18" y="{margen_top+4}" font-size="9" fill="#64748b">dB</text>'
-            f'<text x="{ancho/2}" y="{alto-4}" font-size="9" fill="#64748b" text-anchor="middle">Hz</text>'
+            '<section class="audiometria-ear">'
+            f'<div class="audiometria-header {clase_lado}">{label}</div>'
+            f'<svg viewBox="0 0 {ancho} {alto}" role="img" aria-label="Respuesta del {label.lower()} por frecuencia">'
+            f'<title>Respuesta del {label.lower()} por frecuencia</title>'
+            f'<desc>{pie} No representa umbrales en dB HL.</desc>'
+            f'{"".join(bandas)}{"".join(rejilla_x)}{"".join(etiquetas_y)}'
+            f'{trazado}{"".join(marcadores)}{"".join(etiquetas_x)}'
+            f'<text x="{margen_izq+inner_w/2:.1f}" y="{alto-14}" font-size="13" '
+            'fill="#334155" text-anchor="middle">Frecuencia (Hz)</text>'
+            f'<text x="18" y="{margen_top+inner_h/2:.1f}" font-size="12" fill="#64748b" '
+            'text-anchor="middle" transform="rotate(-90 18 '
+            f'{margen_top+inner_h/2:.1f})">Respuesta</text>'
             '</svg>'
-            '<div class="audiometria-legend"><span><i class="swatch si"></i>Se escucha</span><span><i class="swatch no"></i>No se escucha</span></div>'
-            f'<div class="audiometria-frecuencias">{"".join(boxes)}</div>'
+            '<div class="audiometria-detalle">'
+            '<h3>Detalle por frecuencia</h3>'
+            f'<div class="audiometria-frecuencias">{detalle_frecuencias}</div>'
             '</div>'
+            '<div class="audicion-resumen" aria-label="Resumen de tonos escuchados">'
+            '<div class="audicion-leyenda">'
+            '<span><i class="audicion-indicador"></i>Se escucha</span>'
+            '<span><i class="audicion-indicador no"></i>No se escucha</span>'
+            '</div>'
+            f'<div class="audicion-resultados">{resumen_audicion}</div>'
+            '</div>'
+            '</section>'
         )
 
     return (
-        '<div class="panel">'
-        '<div class="panel-header">Audiometría</div>'
+        '<section class="panel audiometria-panel">'
+        '<div class="panel-header">Audiometría por frecuencia</div>'
+        f'<p class="audiometria-nota">{pie} Este equipo no registra niveles calibrados en dB HL, '
+        'por lo que el gráfico describe respuestas y no umbrales auditivos.</p>'
         '<div class="audiometria-grid">'
-        f'{_ear_svg("Oído derecho", derecha, "#2b6cb0")}'
-        f'{_ear_svg("Oído izquierdo", izquierda, "#f59e0b")}'
+        f'{_ear_svg("Oído derecho", derecha, "#dc2626", "circulo")}'
+        f'{_ear_svg("Oído izquierdo", izquierda, "#1d4ed8", "cruz")}'
         '</div>'
-        '</div>'
+        '<div class="audiometria-legend">'
+        '<span><i class="legend-marker right"></i>Estímulo en oído derecho (círculo)</span>'
+        '<span><i class="legend-marker left"></i>Estímulo en oído izquierdo (cruz)</span>'
+        '</div></section>'
     )
 
 # ------------------------------------------------------------------ construcción
@@ -318,47 +408,59 @@ def construir_reporte(
         (getattr(paciente, c) for c in ("correo", "email", "correo_electronico") if getattr(paciente, c, None)),
         None,
     )
+    fecha_nacimiento = getattr(paciente, "fecha_nacimiento", None)
+    if isinstance(fecha_nacimiento, datetime):
+        fecha_nacimiento = fecha_nacimiento.date()
+    if isinstance(fecha_nacimiento, date):
+        fecha_nacimiento = fecha_nacimiento.strftime("%d/%m/%Y")
+    elif fecha_nacimiento:
+        fecha_nacimiento = str(fecha_nacimiento)
+
     datos_paciente = [
         ["Nombre Completo", nombre or NO_REGISTRADO],
+        ["DNI", getattr(paciente, "dni", None) or NO_REGISTRADO],
+        ["Fecha de nacimiento", fecha_nacimiento or NO_REGISTRADO],
         ["Fecha/Hora", ahora.strftime("%d/%m/%Y %H:%M")],
         ["Edad", _edad(paciente)],
         ["Correo", correo or NO_REGISTRADO],
+        ["Teléfono", getattr(paciente, "telefono", None) or NO_REGISTRADO],
     ]
 
-    mediciones = []
-    for etiqueta, claves, unidad in CAMPOS_MEDICIONES:
-        if claves is None:
-            mediciones.append([etiqueta, _presion(por_modulo)])
-        else:
-            mediciones.append([etiqueta, _con_unidad(_buscar(por_modulo, claves), unidad)])
     registros_oido = por_modulo.get("oido")
     datos_oido = registros_oido[-1].get("data") if registros_oido else {}
-    der, izq = _resumen_oido(por_modulo)
-    if isinstance(datos_oido, dict) and isinstance(datos_oido.get("ensayos"), list):
-        mediciones.append(["Respuestas que indicaron derecha", der])
-        mediciones.append(["Respuestas que indicaron izquierda", izq])
-        no_escucho = sum(
-            1
-            for ensayo in datos_oido["ensayos"]
-            if isinstance(ensayo, dict) and ensayo.get("respuesta") == "NO_ESCUCHE"
-        )
-        mediciones.append(["Tonos que la persona indicó no escuchar", str(no_escucho)])
-    else:
-        mediciones.append(["Audición oído derecho", der])
-        mediciones.append(["Audición oído izquierdo", izq])
-    nivel_senal = (
-        datos_oido.get("nivel_senal", "NORMAL")
-        if isinstance(datos_oido, dict)
-        else "NORMAL"
+    registro_oido = registros_oido[-1] if registros_oido else {}
+    resultados_auditivos = _resultados_reales_oido(
+        datos_oido, registro_oido.get("origen")
     )
-    mediciones.append(
-        [
-            "Nivel de señal auditiva",
-            "Reducido por autoinforme"
-            if nivel_senal == "REDUCIDO_POR_AUTOINFORME"
-            else "Normal (no calibrado)",
+    mediciones = []
+    if resultados_auditivos:
+        frecuencias = resultados_auditivos["frecuencias_hz"]
+        mediciones = [
+            [
+                "Frecuencias evaluadas",
+                ", ".join(str(frecuencia) for frecuencia in frecuencias) + " Hz",
+            ]
         ]
-    )
+        for etiqueta, campo in (
+            ("Respuesta oído derecho", "resultados_oido_derecho"),
+            ("Respuesta oído izquierdo", "resultados_oido_izquierdo"),
+        ):
+            valores = resultados_auditivos[campo]
+            resumen = "; ".join(
+                f"{frecuencia} Hz: "
+                f"{'Sí' if valor is True else 'No' if valor is False else 'Sin respuesta'}"
+                for frecuencia, valor in zip(frecuencias, valores)
+            )
+            mediciones.append([etiqueta, resumen])
+        if resultados_auditivos["origen"]:
+            mediciones.append(["Origen registrado", resultados_auditivos["origen"]])
+        if datos_oido.get("nivel_senal") == "REDUCIDO_POR_AUTOINFORME":
+            mediciones.append(
+                [
+                    "Ajuste aplicado por autoinforme",
+                    "Volumen digital reducido; no es una medición acústica calibrada",
+                ]
+            )
 
     triaje = _datos_triaje(por_modulo)
     estado = str(triaje.get("estado") or triaje.get("estado_triaje") or "").strip().upper()
@@ -389,6 +491,7 @@ def construir_reporte(
         "analisis_ia_estado": analisis_ia_estado,
         "alertas": alertas,
         "audiometria": audiometria,
+        "resultados_auditivos": resultados_auditivos,
         "cuestionario": cuestionario,
         "leyenda": LEYENDA,
     }
@@ -501,6 +604,16 @@ body {
   font-weight: 700;
   color: #0f172a;
 }
+.resultados-nota {
+  margin: 12px 0 0;
+  padding: 9px 11px;
+  border-left: 3px solid #d97706;
+  border-radius: 0 7px 7px 0;
+  color: #713f12;
+  background: #fffbeb;
+  font-size: 11px;
+  line-height: 1.5;
+}
 .summary-card {
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   border: 1px solid #e2e8f0;
@@ -579,30 +692,150 @@ body {
 
 .audiometria-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(250px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
 }
 .audiometria-ear {
+  min-width: 0;
   background: #ffffff;
   border: 1px solid #dfe7f5;
   border-radius: 12px;
-  padding: 12px;
+  padding: 14px 10px 8px;
 }
 .audiometria-header {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.6px;
+  text-align: center;
+  color: #dc2626;
+}
+.audiometria-header.izquierdo {
+  color: #1d4ed8;
+}
+.audiometria-ear svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.audiometria-detalle {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e2e8f0;
+}
+.audiometria-detalle h3 {
+  margin: 0 0 8px;
   color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.audiometria-frecuencias {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+  gap: 6px;
+}
+.freq-box {
+  min-width: 0;
+  padding: 6px 4px;
+  border: 1px solid #dbe3eb;
+  border-radius: 7px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 10px;
+  line-height: 1.35;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.freq-box strong {
+  display: block;
+  margin-bottom: 2px;
+  color: #1e293b;
+  font-size: 10px;
+}
+.freq-box.correcta, .freq-box.percibido {
+  border-color: #a7dfbd;
+  color: #166534;
+  background: #f0fdf4;
+}
+.freq-box.lado-opuesto {
+  border-color: #f2d18b;
+  color: #854d0e;
+  background: #fffbeb;
+}
+.freq-box.no-escuche, .freq-box.no-percibido {
+  border-color: #f3b4b4;
+  color: #991b1b;
+  background: #fef2f2;
+}
+.audicion-resumen {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #e2e8f0;
+}
+.audicion-leyenda {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: #475569;
+  font-size: 10px;
+}
+.audicion-leyenda span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.audicion-indicador {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: #58b987;
+}
+.audicion-indicador.no {
+  background: #e45b63;
+}
+.audicion-resultados {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(54px, 1fr));
+  gap: 6px;
+}
+.audicion-frecuencia {
+  padding: 5px 3px;
+  border: 1px solid #dbe3eb;
+  border-radius: 6px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 9px;
+  line-height: 1.3;
+  text-align: center;
+}
+.audicion-frecuencia strong {
+  display: block;
+  color: #1e293b;
+  font-size: 9px;
+}
+.audicion-frecuencia.si {
+  border-color: #a7dfbd;
+  color: #166534;
+  background: #f0fdf4;
+}
+.audicion-frecuencia.no {
+  border-color: #f3b4b4;
+  color: #991b1b;
+  background: #fef2f2;
 }
 .audiometria-legend {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   flex-wrap: wrap;
-  gap: 12px;
-  margin: 8px 0 0;
-  font-size: 10px;
+  gap: 16px;
+  margin: 14px 0 0;
+  font-size: 11px;
   color: #475569;
 }
 .audiometria-legend span {
@@ -610,44 +843,35 @@ body {
   align-items: center;
   gap: 6px;
 }
-.swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
+.legend-marker {
   display: inline-block;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
 }
-.swatch.si { background: #5cc37a; }
-.swatch.no { background: #ef4444; }
-.audiometria-frecuencias {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
+.legend-marker.right { color: #dc2626; background: #dc2626; }
+.legend-marker.left {
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(45deg, transparent 42%, #1d4ed8 43%, #1d4ed8 57%, transparent 58%),
+    linear-gradient(-45deg, transparent 42%, #1d4ed8 43%, #1d4ed8 57%, transparent 58%);
 }
-.freq-box {
-  width: 52px;
-  text-align: center;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  padding: 4px 3px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.2;
+.audiometria-nota {
+  margin: -.25rem 0 1rem;
+  padding: .7rem .85rem;
+  border-left: 3px solid #d97706;
+  border-radius: 0 7px 7px 0;
+  color: #713f12;
+  background: #fffbeb;
+  font-size: 12px;
+  line-height: 1.5;
 }
-.freq-box .freq {
-  display: block;
-  margin-bottom: 4px;
-  color: #475569;
-}
-.freq-box.si {
-  background: #dcfce7;
-  border-color: #86efac;
-  color: #166534;
-}
-.freq-box.no {
-  background: #fee2e2;
-  border-color: #fca5a5;
-  color: #991b1b;
+@media (max-width: 520px) {
+  .audiometria-grid { grid-template-columns: 1fr; }
+  .audiometria-frecuencias { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 """
 
@@ -769,6 +993,17 @@ def render_html(reporte: dict) -> str:
         f'{escape(str(etiqueta))}</span><span class="metric-value">{escape(str(valor))}</span></div>'
         for etiqueta, valor in reporte["mediciones"]
     )
+    bloque_mediciones = (
+        '<section class="panel">'
+        '<div class="panel-header">Resultados reales registrados · Audiometría</div>'
+        f'<div class="metric-grid">{mediciones_grid}</div>'
+        '<p class="resultados-nota">“Sí” indica que la persona reportó percibir el tono; '
+        '“No” indica que seleccionó “No escuché”. Son respuestas de la prueba, '
+        'no umbrales auditivos clínicos.</p>'
+        '</section>'
+        if reporte["mediciones"]
+        else ""
+    )
 
     bloque_alertas = _lista_html(reporte["alertas"], "• ")
     bloque_audiometria = _audiometria_svg(reporte.get("audiometria", {}))
@@ -794,10 +1029,7 @@ def render_html(reporte: dict) -> str:
         '<div class="panel-header">Datos del paciente</div>'
         f'<div class="metric-grid">{paciente_grid}</div>'
         '</section>'
-        '<section class="panel">'
-        '<div class="panel-header">Mediciones registradas</div>'
-        f'<div class="metric-grid">{mediciones_grid}</div>'
-        '</section>'
+        f'{bloque_mediciones}'
         f'{bloque_audiometria}'
         '<section class="summary-card">'
         '<div class="panel-header">Resultado preventivo general</div>'
