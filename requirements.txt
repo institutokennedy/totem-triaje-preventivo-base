@@ -3,4 +3,4 @@ sqlmodel==0.0.24
 uvicorn[standard]==0.34.3
 pytest==8.3.5
 httpx==0.28.1
-
+zeroconf==0.147.0

@@ -4,6 +4,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Path, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session
+from zeroconf import Error as ZeroconfError
 
 from app.common.models import Dispositivo, EpisodioAtencion
 from app.common.resultado_service import (
@@ -11,6 +12,8 @@ from app.common.resultado_service import (
     guardar_resultado,
 )
 from app.core.database import get_session
+from app.modules.ecg.discovery import get_ecg_discovery
+from app.modules.ecg.preventive_assessment import evaluar_captura_preventiva
 from app.modules.ecg.schemas import (
     DatosECG,
     EntradaECG,
@@ -69,6 +72,19 @@ def captura_simulada() -> dict[str, int | list[float] | str]:
         "adquisicion_id": str(uuid4()),
     }
     return DatosECG.model_validate(data).model_dump(mode="json")
+
+
+@router.get("/conexion")
+def descubrir_dispositivos_ecg() -> dict[str, list[dict[str, str]]]:
+    """Descubre los ESP32 ECG anunciados en la red local mediante mDNS."""
+    try:
+        dispositivos = get_ecg_discovery().dispositivos()
+    except (OSError, RuntimeError, ZeroconfError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No se pudo iniciar el descubrimiento mDNS: {error}",
+        ) from error
+    return {"dispositivos": dispositivos}
 
 
 @router.post(
@@ -162,11 +178,20 @@ def obtener_resultados(
     episodio_id: int = Path(gt=0),
     session: Session = Depends(get_session),
 ) -> RespuestaConsulta:
-    resultados = consultar_resultados(
+    resultados_guardados = consultar_resultados(
         session=session,
         episodio_id=episodio_id,
         modulo=MODULO,
     )
+    resultados = [
+        {
+            **resultado,
+            "evaluacion_preventiva": evaluar_captura_preventiva(
+                DatosECG.model_validate(resultado["data"])
+            ),
+        }
+        for resultado in resultados_guardados
+    ]
 
     return {
         "episodio_id": episodio_id,
@@ -179,3 +204,8 @@ def obtener_resultados(
 # python -m uvicorn app.main:app --reload
 
 # py -3.13 -m venv .venv
+
+# compilar: pio -d ESP32_ECG_API run
+# subir: pio -d ESP32_ECG_API run --target upload
+
+#  python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

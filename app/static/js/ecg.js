@@ -3,6 +3,14 @@
 
   const API = "/api/v1";
   const MUESTRAS_CAPTURA = 2500;
+  const VENTANA_VISUAL_SEGUNDOS = 10;
+  const MUESTRAS_VENTANA_VISUAL = 250 * VENTANA_VISUAL_SEGUNDOS;
+  const GRAFICA_X_INICIO = 72;
+  const GRAFICA_X_FIN = 620;
+  const GRAFICA_Y_INICIO = 20;
+  const GRAFICA_Y_FIN = 160;
+  const GRAFICA_PASO_X =
+    (GRAFICA_X_FIN - GRAFICA_X_INICIO) / MUESTRAS_VENTANA_VISUAL;
   const app = document.getElementById("ecg-app");
   const stepPanels = [
     "#paso-preparacion",
@@ -23,9 +31,14 @@
   let capturaActual = null;
   let sensorCapturesById = new Map();
   let isCapturing = false;
+  let esp32BaseUrl = null;
+  let estadoConexion = "DESCONECTADO";
+  let conexionTimer = null;
   let pollingGeneration = 0;
   let pollingTimer = null;
   let acquisitionId = null;
+  let liveSignalBuffer = createLiveSignalBuffer(MUESTRAS_VENTANA_VISUAL);
+  let liveSignalFrame = null;
 
   function showStep(index, preserveError = false) {
     currentStep = index;
@@ -95,8 +108,16 @@
     const ready = episodioActivo?.estado === "INICIADO" &&
       Number.isSafeInteger(episodioActivo.id) && episodioActivo.id > 0 &&
       dispositivoEcg !== null &&
-      app.querySelector("#esp32-url").value.trim().length > 0;
+      estadoConexion === "CONECTADO" &&
+      esp32BaseUrl !== null;
     app.querySelector("#iniciar-ecg").disabled = !ready || isCapturing;
+  }
+
+  function setDeviceConnection(status, detail = "") {
+    estadoConexion = status;
+    app.querySelector("#estado-dispositivo").textContent =
+      `Conexión: ${status}${detail ? ` · ${detail}` : "."}`;
+    updateStartButton();
   }
 
   async function loadEpisodeContext() {
@@ -189,26 +210,19 @@
     }
   }
 
-  function deviceBaseUrl() {
-    const raw = app.querySelector("#esp32-url").value.trim();
-    if (!raw) throw new Error("Ingresá la dirección del ESP32.");
-    const value = /^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
-    const url = new URL(value);
-    if (
-      url.protocol !== "http:" || url.username || url.password ||
-      (url.pathname !== "/" && url.pathname !== "") || url.search || url.hash
-    ) {
-      throw new Error("Ingresá solo la dirección HTTP local del ESP32, sin rutas.");
-    }
-    return url.origin;
-  }
-
   async function requestDeviceJson(baseUrl, path, options = {}) {
-    return requestJson(`${baseUrl}${path}`, {
-      ...options,
-      mode: "cors",
-      cache: "no-store",
-    });
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 4000);
+    try {
+      return await requestJson(`${baseUrl}${path}`, {
+        ...options,
+        mode: "cors",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } finally {
+      window.clearTimeout(timeout);
+    }
   }
 
   async function readDeviceState(baseUrl) {
@@ -225,11 +239,82 @@
         Number.isInteger(sample) && sample >= 0 && sample <= 4095
       ) ||
       state.frecuencia_muestreo_hz !== 250 ||
-      state.unidad !== "ADC"
+      state.unidad !== "ADC" ||
+      typeof state.wifi_conectado !== "boolean" ||
+      typeof state.backend_conectado !== "boolean"
     ) {
       throw new Error("El ESP32 devolvió un estado ECG incompatible.");
     }
     return state;
+  }
+
+  async function pollDeviceConnection() {
+    if (isCapturing) {
+      conexionTimer = window.setTimeout(() => { void pollDeviceConnection(); }, 3000);
+      return;
+    }
+
+    setDeviceConnection("CONECTANDO", "buscando el ESP32 en la red local");
+    try {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 5000);
+      let discovery;
+      try {
+        discovery = await requestJson(`${API}/ecg/conexion`, {
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+      } finally {
+        window.clearTimeout(timeout);
+      }
+      if (!Array.isArray(discovery.dispositivos)) {
+        throw new Error("La API devolvió un resultado de descubrimiento inválido.");
+      }
+      if (discovery.dispositivos.length === 0) {
+        esp32BaseUrl = null;
+        setDeviceConnection("DESCONECTADO", "no se detectó un ESP32 ECG por mDNS");
+        return;
+      }
+
+      let errorConexion = null;
+      for (const device of discovery.dispositivos) {
+        if (device.codigo !== "ECG-001" || typeof device.base_url !== "string") {
+          continue;
+        }
+        try {
+          const url = new URL(device.base_url);
+          if (
+            url.protocol !== "http:" || url.username || url.password ||
+            (url.pathname !== "/" && url.pathname !== "") || url.search || url.hash
+          ) {
+            throw new Error("El descubrimiento devolvió una URL de ESP32 inválida.");
+          }
+          const state = await readDeviceState(url.origin);
+          if (!state.wifi_conectado) {
+            throw new Error("El ESP32 respondió, pero no está conectado al Wi-Fi.");
+          }
+          if (!state.backend_conectado) {
+            throw new Error("El ESP32 respondió, pero todavía no encontró FastAPI por mDNS.");
+          }
+          esp32BaseUrl = url.origin;
+          setDeviceConnection("CONECTADO", "ESP32 y FastAPI responden");
+          return;
+        } catch (error) {
+          errorConexion = error;
+        }
+      }
+      esp32BaseUrl = null;
+      const detail = errorConexion instanceof Error
+        ? errorConexion.message
+        : "el ESP32 anunciado no coincide con ECG-001";
+      setDeviceConnection("ERROR", `${detail} (red, CORS o timeout)`);
+    } catch (error) {
+      esp32BaseUrl = null;
+      const detail = error instanceof Error ? error.message : "error de comunicación";
+      setDeviceConnection("ERROR", `no se pudo consultar FastAPI: ${detail}`);
+    } finally {
+      conexionTimer = window.setTimeout(() => { void pollDeviceConnection(); }, 3000);
+    }
   }
 
   async function obtenerResultadosPersistidos() {
@@ -275,49 +360,377 @@
     selector.hidden = capturas.length === 0;
   }
 
-  function drawSignal(samples, frequency, unit) {
+  function createLiveSignalBuffer(capacity) {
+    return {
+      samples: new Array(capacity),
+      discontinuities: new Array(capacity),
+      sequences: new Array(capacity),
+      head: 0,
+      size: 0,
+      capacity,
+      acquisitionId: null,
+      lastCount: 0,
+      discontinuityPending: false,
+      discontinuitiesCount: 0,
+      lastSampleReceivedAt: 0,
+      lastSequence: -1,
+      frequency: 250,
+      unit: "ADC",
+    };
+  }
+
+  function resetLiveSignalBuffer(buffer, acquisitionId) {
+    buffer.head = 0;
+    buffer.size = 0;
+    buffer.acquisitionId = acquisitionId;
+    buffer.lastCount = 0;
+    buffer.discontinuityPending = false;
+    buffer.discontinuitiesCount = 0;
+    buffer.lastSampleReceivedAt = 0;
+    buffer.lastSequence = -1;
+  }
+
+  function appendLiveSignalState(buffer, state, receivedAt) {
+    let changed = false;
+    if (
+      buffer.acquisitionId !== state.adquisicion_id ||
+      state.cantidad_muestras < buffer.lastCount
+    ) {
+      resetLiveSignalBuffer(buffer, state.adquisicion_id);
+      changed = true;
+    }
+
+    buffer.frequency = state.frecuencia_muestreo_hz;
+    buffer.unit = state.unidad;
+    const firstNewSample = buffer.lastCount;
+    if (firstNewSample < state.cantidad_muestras && buffer.discontinuityPending) {
+      buffer.discontinuitiesCount += 1;
+    }
+    for (let index = firstNewSample; index < state.cantidad_muestras; index += 1) {
+      const position = (buffer.head + buffer.size) % buffer.capacity;
+      const overwriting = buffer.size === buffer.capacity;
+      const target = overwriting ? buffer.head : position;
+      buffer.samples[target] = state.muestras[index];
+      buffer.discontinuities[target] =
+        index === firstNewSample && buffer.discontinuityPending;
+      buffer.sequences[target] = index;
+      if (overwriting) buffer.head = (buffer.head + 1) % buffer.capacity;
+      else buffer.size += 1;
+    }
+
+    if (state.cantidad_muestras > firstNewSample) {
+      buffer.lastSequence = state.cantidad_muestras - 1;
+      buffer.lastSampleReceivedAt = receivedAt;
+      buffer.discontinuityPending = false;
+      changed = true;
+    }
+    buffer.lastCount = state.cantidad_muestras;
+    return changed;
+  }
+
+  function markLiveSignalDiscontinuity(buffer) {
+    buffer.discontinuityPending = true;
+  }
+
+  function visualAmplitudeScale(samples) {
+    if (samples.length === 0) return { baseline: 0, amplitude: 1 };
+    let minimum = samples[0];
+    let maximum = samples[0];
+    for (const sample of samples) {
+      minimum = Math.min(minimum, sample);
+      maximum = Math.max(maximum, sample);
+    }
+    const baseline = (minimum + maximum) / 2;
+    return {
+      baseline,
+      amplitude: Math.max(Math.abs(maximum - baseline), 1),
+    };
+  }
+
+  function liveSignalSamples(buffer) {
+    return Array.from({ length: buffer.size }, (_, offset) =>
+      buffer.samples[(buffer.head + offset) % buffer.capacity]
+    );
+  }
+
+  function updateSignalScaleStatus(samples, baseline) {
+    let lowerRail = 0;
+    let upperRail = 0;
+    for (const sample of samples) {
+      if (sample === 0) lowerRail += 1;
+      if (sample === 4095) upperRail += 1;
+    }
+    app.querySelector("#amplitud-maxima").textContent = "+";
+    app.querySelector("#amplitud-centro-escala").textContent = "0";
+    app.querySelector("#amplitud-minima").textContent = "−";
+    app.querySelector("#unidad-eje").textContent =
+      "Desviación visual centrada (sin unidad calibrada)";
+    app.querySelector("#estado-escala-vertical").textContent =
+      `Muestras originales: ${samples.length}; línea base visual ADC: ${baseline}; ` +
+      `amplitud autoajustada solo para mostrar. Fuente ADC cruda; no convertida a mV. ` +
+      `Muestras en rieles 0/4095: ${lowerRail}/${upperRail}.`;
+  }
+
+  function updateSignalContinuityStatus(buffer) {
+    app.querySelector("#estado-integridad-senal").textContent =
+      `Interrupciones de comunicación representadas con trazos separados: ` +
+      `${buffer.discontinuitiesCount}. El ESP32 no informa pérdidas internas entre muestras.`;
+  }
+
+  function liveSignalPath(
+    buffer,
+    samples = liveSignalSamples(buffer),
+    scale = visualAmplitudeScale(samples)
+  ) {
+    const commands = [];
+    for (let offset = 0; offset < buffer.size; offset += 1) {
+      const position = (buffer.head + offset) % buffer.capacity;
+      const sequence = buffer.sequences[position];
+      const y = (GRAFICA_Y_INICIO + GRAFICA_Y_FIN) / 2 -
+        ((buffer.samples[position] - scale.baseline) / scale.amplitude) *
+          ((GRAFICA_Y_FIN - GRAFICA_Y_INICIO) / 2);
+      const x = (sequence - buffer.lastSequence) * GRAFICA_PASO_X;
+      commands.push(
+        `${buffer.discontinuities[position] || offset === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`
+      );
+    }
+    return commands.join(" ");
+  }
+
+  function liveSignalOffset(buffer, now) {
+    if (buffer.size === 0) return GRAFICA_X_FIN;
+    const ageSeconds = Math.max(0, (now - buffer.lastSampleReceivedAt) / 1000);
+    return GRAFICA_X_FIN - ageSeconds * buffer.frequency * GRAFICA_PASO_X;
+  }
+
+  function updateLiveSignalTrace(now) {
+    const trace = app.querySelector("#trazo-senal");
+    const group = app.querySelector("#trazo-grupo");
+    const samples = liveSignalSamples(liveSignalBuffer);
+    const scale = visualAmplitudeScale(samples);
+    trace.setAttribute(
+      "d",
+      liveSignalPath(liveSignalBuffer, samples, scale)
+    );
+    group.setAttribute(
+      "transform",
+      `translate(${liveSignalOffset(liveSignalBuffer, now).toFixed(2)} 0)`
+    );
+    updateSignalScaleStatus(samples, scale.baseline);
+    updateSignalContinuityStatus(liveSignalBuffer);
+  }
+
+  function animateLiveSignal() {
+    if (liveSignalFrame !== null) return;
+    const renderFrame = (now) => {
+      liveSignalFrame = null;
+      if (!isCapturing) return;
+      app.querySelector("#trazo-grupo").setAttribute(
+        "transform",
+        `translate(${liveSignalOffset(liveSignalBuffer, now).toFixed(2)} 0)`
+      );
+      liveSignalFrame = window.requestAnimationFrame(renderFrame);
+    };
+    liveSignalFrame = window.requestAnimationFrame(renderFrame);
+  }
+
+  function stopLiveSignalAnimation() {
+    if (liveSignalFrame !== null) {
+      window.cancelAnimationFrame(liveSignalFrame);
+      liveSignalFrame = null;
+    }
+    if (liveSignalBuffer.size > 0) updateLiveSignalTrace(performance.now());
+  }
+
+  function drawSignal(samples) {
     const trace = app.querySelector("#trazo-senal");
     if (samples.length === 0) {
-      trace.setAttribute("points", "");
+      trace.setAttribute("d", "");
+      app.querySelector("#trazo-grupo").setAttribute(
+        "transform",
+        `translate(${GRAFICA_X_FIN} 0)`
+      );
+      updateSignalScaleStatus([], 0);
       return;
     }
 
-    const minimum = Math.min(...samples);
-    const maximum = Math.max(...samples);
-    const range = maximum - minimum || 1;
-    const points = samples.map((sample, index) => {
-      const x = 72 + index * (548 / Math.max(samples.length - 1, 1));
-      const y = 160 - ((sample - minimum) / range) * 140;
-      return `${x},${y}`;
+    const visibleSamples = samples.slice(-MUESTRAS_VENTANA_VISUAL);
+    const scale = visualAmplitudeScale(visibleSamples);
+    const points = visibleSamples.map((sample, index) => {
+      const x = index * GRAFICA_PASO_X;
+      const y = (GRAFICA_Y_INICIO + GRAFICA_Y_FIN) / 2 -
+        ((sample - scale.baseline) / scale.amplitude) *
+          ((GRAFICA_Y_FIN - GRAFICA_Y_INICIO) / 2);
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
     });
-    trace.setAttribute("points", points.join(" "));
-    app.querySelector("#amplitud-maxima").textContent = String(maximum);
-    app.querySelector("#amplitud-centro-escala").textContent =
-      String((minimum + maximum) / 2);
-    app.querySelector("#amplitud-minima").textContent = String(minimum);
-    const duration = (samples.length - 1) / frequency;
-    app.querySelector("#tiempo-medio").textContent = `${(duration / 2).toFixed(3)} s`;
-    app.querySelector("#tiempo-total").textContent = `${duration.toFixed(3)} s`;
-    app.querySelector("#unidad-eje").textContent = `Amplitud (${unit})`;
+    trace.setAttribute("d", points.join(" "));
+    app.querySelector("#trazo-grupo").setAttribute(
+      "transform",
+      `translate(${GRAFICA_X_INICIO} 0)`
+    );
+    updateSignalScaleStatus(visibleSamples, scale.baseline);
+    app.querySelector("#estado-integridad-senal").textContent =
+      "Captura guardada: no se agregaron muestras ni se interpolaron segmentos.";
+    app.querySelector("#tiempo-medio").textContent = "5 s";
+    app.querySelector("#tiempo-total").textContent =
+      `${VENTANA_VISUAL_SEGUNDOS} s`;
   }
 
   function clearSignal() {
-    drawSignal([], 250, "ADC");
-    app.querySelector("#amplitud-maxima").textContent = "—";
-    app.querySelector("#amplitud-centro-escala").textContent = "—";
-    app.querySelector("#amplitud-minima").textContent = "—";
+    resetLiveSignalBuffer(liveSignalBuffer, null);
+    drawSignal([]);
     app.querySelector("#tiempo-medio").textContent = "— s";
     app.querySelector("#tiempo-total").textContent = "— s";
-    app.querySelector("#unidad-eje").textContent = "Amplitud —";
     app.querySelector("#cantidad-final").textContent = "—";
     app.querySelector("#frecuencia-final").textContent = "—";
     app.querySelector("#unidad-final").textContent = "—";
+    updateSignalContinuityStatus(liveSignalBuffer);
+  }
+
+  function renderAssessmentList(selector, values, emptyMessage) {
+    const list = app.querySelector(selector);
+    const entries = Array.isArray(values) && values.length > 0
+      ? values.map(String)
+      : [emptyMessage];
+    list.replaceChildren(...entries.map((value) => {
+      const item = document.createElement("li");
+      item.textContent = value;
+      return item;
+    }));
+  }
+
+  function renderPreventiveAssessment(result) {
+    const panel = app.querySelector("#evaluacion-preventiva");
+    const assessment = result?.evaluacion_preventiva;
+    const stateCards = app.querySelectorAll(".assessment-state");
+    let matchingCard;
+    let nonEvaluableCard;
+    for (const card of stateCards) {
+      if (
+        matchingCard === undefined &&
+        card.dataset.nivel === assessment?.nivel &&
+        card.dataset.color === assessment?.color
+      ) {
+        matchingCard = card;
+      }
+      if (nonEvaluableCard === undefined && card.dataset.nivel === "NO_EVALUABLE") {
+        nonEvaluableCard = card;
+      }
+    }
+    const hasMeasurementData = assessment?.valores_medidos &&
+      typeof assessment.valores_medidos === "object" &&
+      !Array.isArray(assessment.valores_medidos);
+    const hasCompleteAssessment =
+      matchingCard !== undefined &&
+      typeof assessment.motivo === "string" &&
+      assessment.motivo.trim().length > 0 &&
+      Array.isArray(assessment.parametros_evaluados) &&
+      hasMeasurementData &&
+      Array.isArray(assessment.criterios_activados) &&
+      Array.isArray(assessment.parametros_no_evaluables) &&
+      Array.isArray(assessment.advertencias_tecnicas) &&
+      typeof assessment.calidad_senal === "string" &&
+      assessment.calidad_senal.trim().length > 0 &&
+      Number.isInteger(assessment.datos_tecnicos?.frecuencia_muestreo_hz) &&
+      Number.isInteger(assessment.datos_tecnicos?.cantidad_muestras) &&
+      ["mV", "ADC"].includes(assessment.datos_tecnicos?.unidad) &&
+      (assessment.nivel !== "VERDE" ||
+        (assessment.parametros_evaluados.length > 0 &&
+          Object.keys(assessment.valores_medidos).length > 0));
+    const selectedCard = hasCompleteAssessment
+      ? matchingCard
+      : nonEvaluableCard;
+
+    stateCards.forEach((card) => card.removeAttribute("aria-current"));
+    selectedCard?.setAttribute("aria-current", "true");
+    panel.dataset.color = selectedCard?.dataset.color.toLowerCase() ?? "gris";
+
+    if (!hasCompleteAssessment) {
+      app.querySelector("#evaluacion-nivel").textContent = "NO EVALUABLE · GRIS";
+      app.querySelector("#evaluacion-motivo").textContent =
+        "La API no proporcionó una evaluación preventiva compatible; no se puede inferir normalidad.";
+      app.querySelector("#evaluacion-calidad").textContent = "NO EVALUADA";
+      app.querySelector("#evaluacion-datos-tecnicos").textContent =
+        "No disponibles.";
+      renderAssessmentList(
+        "#evaluacion-parametros-evaluados",
+        [],
+        "Ninguno."
+      );
+      renderAssessmentList(
+        "#evaluacion-valores-medidos",
+        [],
+        "No hay mediciones clínicas confiables."
+      );
+      renderAssessmentList(
+        "#evaluacion-criterios",
+        [],
+        "No se evaluaron criterios clínicos; esto no significa normalidad."
+      );
+      renderAssessmentList(
+        "#evaluacion-parametros-pendientes",
+        ["No se recibió una evaluación compatible."],
+        "No se recibió una evaluación compatible."
+      );
+      renderAssessmentList(
+        "#evaluacion-advertencias",
+        [],
+        "La evaluación clínica y la calidad de señal no están disponibles."
+      );
+      return;
+    }
+
+    app.querySelector("#evaluacion-nivel").textContent =
+      `${assessment.nivel} · ${assessment.color}`;
+    app.querySelector("#evaluacion-motivo").textContent = assessment.motivo;
+    app.querySelector("#evaluacion-calidad").textContent =
+      assessment.calidad_senal;
+    const technical = assessment.datos_tecnicos;
+    const metrics = assessment.metricas_tecnicas;
+    app.querySelector("#evaluacion-datos-tecnicos").textContent =
+      technical
+        ? `${technical.cantidad_muestras} muestras · ${technical.frecuencia_muestreo_hz} Hz · ${technical.unidad}` +
+          (metrics
+            ? ` · intervalo entre muestras: ${metrics.duracion_entre_muestras_segundos.toFixed(3)} s · rango: ${metrics.amplitud_minima}–${metrics.amplitud_maxima} (${metrics.amplitud_rango}) · ${metrics.muestras_distintas} valores distintos` +
+              (technical.unidad === "ADC"
+                ? ` · muestras ADC en 0/4095: ${metrics.muestras_adc_en_riel_inferior}/${metrics.muestras_adc_en_riel_superior}`
+                : "")
+            : "")
+        : "No disponibles.";
+    renderAssessmentList(
+      "#evaluacion-parametros-evaluados",
+      assessment.parametros_evaluados,
+      "Ninguno."
+    );
+    renderAssessmentList(
+      "#evaluacion-valores-medidos",
+      Object.entries(assessment.valores_medidos ?? {}).map(
+        ([name, value]) => `${name}: ${value}`
+      ),
+      "No hay mediciones clínicas confiables."
+    );
+    renderAssessmentList(
+      "#evaluacion-criterios",
+      assessment.criterios_activados,
+      "No se evaluaron criterios clínicos; esto no significa normalidad."
+    );
+    renderAssessmentList(
+      "#evaluacion-parametros-pendientes",
+      assessment.parametros_no_evaluables,
+      "No se recibió una lista de parámetros no evaluables."
+    );
+    renderAssessmentList(
+      "#evaluacion-advertencias",
+      assessment.advertencias_tecnicas,
+      "No se recibió una lista de advertencias técnicas."
+    );
   }
 
   function actualizarCapturaGuardada(result, isNewCapture = false) {
     if (!capturaSensorValida(result)) {
       throw new Error("La API devolvió una captura física que no cumple el contrato ECG.");
     }
+    renderPreventiveAssessment(result);
     const data = result.data;
     capturaActual = {
       adquisicion_id: data.adquisicion_id,
@@ -325,7 +738,7 @@
       muestras: [...data.muestras],
       unidad: data.unidad,
     };
-    drawSignal(capturaActual.muestras, capturaActual.frecuencia_muestreo_hz, capturaActual.unidad);
+    drawSignal(capturaActual.muestras);
     app.querySelector("#cantidad-final").textContent = String(capturaActual.muestras.length);
     app.querySelector("#frecuencia-final").textContent =
       `${capturaActual.frecuencia_muestreo_hz} Hz`;
@@ -337,6 +750,9 @@
     app.querySelector("#capturas-historicas").value = String(result.id);
     app.querySelector("#estado-guardado").textContent =
       `Resultado guardado: la API confirmó la captura #${result.id}.`;
+    app.querySelector("#estado-captura").textContent = isNewCapture
+      ? `Captura nueva confirmada y guardada (#${result.id}).`
+      : `Captura histórica cargada (#${result.id}); no es una captura nueva.`;
     setStatus(isNewCapture
       ? `Resultado guardado por la API · captura #${result.id}.`
       : `Captura histórica #${result.id}.`);
@@ -358,7 +774,13 @@
   function updateLiveSignal(state) {
     const samples = state.muestras;
     if (samples.length > 0) {
-      drawSignal(samples, state.frecuencia_muestreo_hz, state.unidad || "ADC");
+      const changed = appendLiveSignalState(
+        liveSignalBuffer,
+        state,
+        performance.now()
+      );
+      if (changed) updateLiveSignalTrace(performance.now());
+      animateLiveSignal();
       app.querySelector("#cantidad-final").textContent = String(samples.length);
       app.querySelector("#frecuencia-final").textContent =
         `${state.frecuencia_muestreo_hz} Hz`;
@@ -375,6 +797,7 @@
       pollingTimer = null;
     }
     isCapturing = false;
+    stopLiveSignalAnimation();
     updateStartButton();
   }
 
@@ -395,6 +818,12 @@
       if (state.episodio_id !== episodioActivo.id) {
         throw new Error("El ESP32 está configurado con otro episodio.");
       }
+      setDeviceConnection(
+        state.backend_conectado ? "CONECTADO" : "ERROR",
+        state.backend_conectado
+          ? "ESP32 y FastAPI responden"
+          : "el ESP32 perdió la comunicación mDNS con FastAPI"
+      );
       if (state.adquisicion_id) acquisitionId = state.adquisicion_id;
       updateLiveSignal(state);
 
@@ -403,6 +832,8 @@
         return;
       }
       if (state.captura_pendiente) {
+        app.querySelector("#estado-captura").textContent =
+          "Adquisición completa (2500 muestras); esperando confirmación de persistencia.";
         if (state.codigo_http < 200 || state.codigo_http >= 300) {
           setStatus(`Error de guardado (${state.codigo_http || "red"}): ${state.mensaje} Se conserva la captura y el ESP32 reintentará con el mismo UUID.`);
           reportError(new Error(state.mensaje || "La API no confirmó el guardado."));
@@ -410,6 +841,8 @@
           setStatus("Procesando y guardando la captura completa en la API…");
         }
       } else if (state.adquisicion_en_curso) {
+        app.querySelector("#estado-captura").textContent =
+          `Adquisición en curso: ${state.cantidad_muestras}/${MUESTRAS_CAPTURA}; aún no es una captura confirmada.`;
         setStatus(`Adquiriendo ECG: ${state.cantidad_muestras}/${MUESTRAS_CAPTURA} muestras reales.`);
       }
 
@@ -429,6 +862,8 @@
           }
         } catch (error) {
           setStatus(`Error consultando el guardado en la API: ${error.message}`);
+          app.querySelector("#estado-guardado").textContent =
+            "No se confirmó un resultado guardado.";
           reportError(error);
         }
       }
@@ -450,6 +885,8 @@
         setStatus("Esperando señal: conectá los electrodos al AD8232.");
       }
     } catch (error) {
+      markLiveSignalDiscontinuity(liveSignalBuffer);
+      setDeviceConnection("ERROR", "sin respuesta del ESP32 (red, CORS o timeout)");
       setStatus(`Error de comunicación con ESP32: ${error.message}. Reintentando consulta…`);
       reportError(error);
     }
@@ -479,17 +916,11 @@
   async function iniciarECG() {
     if (
       isCapturing || episodioActivo?.estado !== "INICIADO" ||
-      !dispositivoEcg || !Number.isSafeInteger(episodioActivo.id)
+      !dispositivoEcg || !Number.isSafeInteger(episodioActivo.id) ||
+      estadoConexion !== "CONECTADO" || esp32BaseUrl === null
     ) return;
 
-    let baseUrl;
-    try {
-      baseUrl = deviceBaseUrl();
-    } catch (error) {
-      setStatus(`Listo para iniciar: ${error.message}`);
-      reportError(error);
-      return;
-    }
+    const baseUrl = esp32BaseUrl;
 
     capturaActual = null;
     acquisitionId = null;
@@ -500,8 +931,8 @@
     showStep(currentStep, true);
     app.querySelector("#estado-guardado").textContent = "";
     setStatus("Conectando con ESP32 y verificando el episodio…");
-    app.querySelector("#estado-dispositivo").textContent =
-      "Conexión en curso con ESP32.";
+    app.querySelector("#estado-captura").textContent =
+      "Conectado; adquisición aún no iniciada.";
     const generation = ++pollingGeneration;
 
     try {
@@ -529,19 +960,20 @@
           throw new Error("El ESP32 no confirmó el episodio y dispositivo solicitados.");
         }
         await requestDeviceJson(baseUrl, "/iniciar", { method: "POST" });
+        app.querySelector("#estado-captura").textContent =
+          "Adquisición iniciada; la captura aún no está confirmada.";
         setStatus("Adquiriendo ECG: esperando las primeras muestras del AD8232…");
       }
       app.querySelector("#error").hidden = true;
-      app.querySelector("#estado-dispositivo").textContent =
-        "ESP32 conectado; adquisición física en curso.";
       await pollAcquisition(baseUrl, generation);
     } catch (error) {
       isCapturing = false;
+      setDeviceConnection("ERROR", "no se pudo confirmar la conexión o el inicio");
+      app.querySelector("#estado-captura").textContent =
+        "No se confirmó una captura nueva.";
       updateStartButton();
       setStatus(`Error de comunicación o inicio: ${error.message}`);
       reportError(error);
-      app.querySelector("#estado-dispositivo").textContent =
-        "No se pudo confirmar la conexión o el inicio del ESP32.";
     }
   }
 
@@ -560,13 +992,12 @@
   app.querySelector("#iniciar-ecg").addEventListener("click", () => {
     void iniciarECG();
   });
-  app.querySelector("#esp32-url").addEventListener("input", updateStartButton);
   app.querySelector("#capturas-historicas").addEventListener("change", (event) => {
     const result = sensorCapturesById.get(Number(event.target.value));
     if (result) actualizarCapturaGuardada(result);
   });
-
   showStep(0);
   updateStartButton();
   void loadEpisodeContext();
+  void pollDeviceConnection();
 })();

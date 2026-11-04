@@ -17,21 +17,22 @@ La conexión física y el cableado deben validarse con la placa y el módulo rea
 ## Configuración
 
 1. Copiá `include/ecg_config.h.example` como `include/ecg_config.h`.
-2. Configurá el SSID, la clave Wi-Fi y la URL base HTTP de la API. `ecg_config.h` está excluido de Git.
-3. Compilá y cargá desde esta carpeta con PlatformIO (`pio run`, luego `pio run -t upload`).
-4. Abrí el monitor serie a 115200 baudios y consultá la IP que recibe el ESP32.
-5. Abrí el módulo ECG en el tótem, ingresá la dirección local `http://<IP_DEL_ESP32>` y elegí **Iniciar ECG**. El frontend configura el episodio validado en el ESP32, espera que los electrodos estén conectados y comienza la captura.
+2. Configurá únicamente el SSID y la clave Wi-Fi en ese archivo local. `ecg_config.h` está excluido de Git; no copies credenciales a `main.cpp` ni a archivos versionados.
+3. Iniciá FastAPI en una interfaz accesible desde la red local: `python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`. Si cambiás el puerto, configurá `ECG_API_PORT` con el mismo valor antes de iniciar la aplicación (por ejemplo, en PowerShell: `$env:ECG_API_PORT=8001`).
+4. Permití mDNS/DNS-SD multicast (UDP 5353) y HTTP TCP entre el tótem y el ESP32 en la red local. El servidor publica `_totem-api._tcp.local`; el ESP32 lo descubre y obtiene dirección y puerto por mDNS. El ESP32 anuncia `_ecg._tcp.local`; el backend descubre el sensor y el frontend consume esa lista a través de la API del mismo origen.
+5. Compilá y cargá desde esta carpeta con PlatformIO (`pio run`, luego `pio run -t upload`). Abrí el monitor serie a 115200 baudios para consultar el estado Wi-Fi y mDNS.
+6. Abrí el módulo ECG desde el tótem. La interfaz busca el ESP32 automáticamente y muestra el estado de conexión. Tras verificar episodio, dispositivo y electrodos, elegí **Iniciar ECG** para comenzar la captura.
 
-El episodio se configura explícitamente desde el frontend del tótem y no queda guardado al reiniciar el ESP32. Una captura pendiente de envío bloquea el inicio de otra. El navegador consulta el estado y las muestras parciales del ESP32 durante la captura, y muestra el resultado solo cuando la API ECG confirma que fue guardado.
+El episodio se configura explícitamente desde el frontend del tótem y no queda guardado al reiniciar el ESP32. Una captura pendiente de envío bloquea el inicio de otra. El navegador consulta el estado y las muestras parciales del ESP32 durante la captura, y muestra una captura nueva solo cuando la API ECG confirma que fue guardada. La verificación de conectividad por sí sola no indica que exista una captura.
 
-El servidor HTTP del ESP32 habilita CORS únicamente para el origen derivado de `ECG_API_BASE_URL`, para que el frontend del tótem pueda consultar `/api/ecg` y enviar formularios URL-encoded a `/configurar` y `/iniciar`. Abrí la interfaz usando el mismo host y puerto configurados para la API; debe servirse desde una red local que pueda alcanzar al ESP32. La configuración actual usa HTTP local, no TLS.
+El servidor HTTP del ESP32 habilita CORS para permitir al navegador consultar `/api/ecg` y enviar formularios URL-encoded a `/configurar` y `/iniciar` desde el origen del tótem. El firmware usa HTTP local sin TLS ni autenticación: mantené ESP32 y FastAPI en una red confiable y no publiques estos servicios en Internet.
 
 ## Comunicación ESP32 → FastAPI
 
-Al completar 2500 muestras, el ESP32 envía un HTTP POST a:
+Al completar 2500 muestras, el ESP32 descubre FastAPI por mDNS y envía un HTTP POST al puerto anunciado:
 
 ```
-http://<IP_DEL_TOTEM>:8000/api/v1/ecg/resultados
+http://<DIRECCION_DESCUBIERTA>:<PUERTO_ANUNCIADO>/api/v1/ecg/resultados
 ```
 
 Contrato transmitido:
@@ -71,6 +72,9 @@ La página local del ESP32 conserva una estimación experimental de frecuencia c
 ## Limitaciones y pruebas físicas
 
 - HTTP se debe utilizar únicamente en una red local confiable; no se configura TLS ni autenticación en este firmware.
+- La red debe permitir que tótem y ESP32 intercambien mDNS/DNS-SD y HTTP. VLAN separadas, aislamiento de clientes Wi-Fi o reglas de firewall pueden impedir el descubrimiento aunque ambos dispositivos tengan Wi-Fi.
+- FastAPI debe escuchar en una interfaz de red (`--host 0.0.0.0`) y el puerto anunciado por `ECG_API_PORT` debe coincidir con el puerto real de Uvicorn.
+- La clave Wi-Fi solo se configura en el archivo local ignorado `include/ecg_config.h`; el repositorio no incluye credenciales.
 - La frecuencia es una frecuencia objetivo nominal; su precisión, los electrodos y los valores ADC deben verificarse con el hardware real.
 - Las pruebas automatizadas de FastAPI no verifican la placa, el AD8232, el Wi-Fi ni la comunicación física.
 - Antes de uso se debe probar continuidad de muestras, estado de electrodos, caída/reconexión de Wi-Fi, reintento idempotente y asociación al episodio real.

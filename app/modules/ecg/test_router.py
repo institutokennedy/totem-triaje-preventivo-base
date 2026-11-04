@@ -23,9 +23,11 @@ from app.modules.ecg.router import router as ecg_router
 from app.modules.ecg.schemas import (
     DatosECG,
     EntradaECG,
+    EvaluacionPreventivaECG,
     MUESTRAS_CAPTURA_SENSOR,
     RespuestaConsulta,
 )
+from app.modules.ecg.preventive_assessment import evaluar_captura_preventiva
 from app.modules.ecg.simulator import generar_datos_ecg
 
 
@@ -256,6 +258,7 @@ const context = {
   Date: class extends Date {
     static now() { return mockNow; }
   },
+  performance: { now: () => mockNow },
   Intl,
   URLSearchParams,
   window: {
@@ -267,6 +270,8 @@ const context = {
       return intervalId;
     },
     clearInterval: (intervalId) => intervals.delete(intervalId),
+    requestAnimationFrame: () => nextIntervalId++,
+    cancelAnimationFrame: (frameId) => intervals.delete(frameId),
   },
   fetch: fetchMock,
 };
@@ -374,7 +379,7 @@ function snapshot(extra) {
     status: elements.get("estado-guardado").textContent,
     confirmDisabled: elements.get("guardar-resultado").disabled,
     verificationDisabled: elements.get("verificar-resultado").disabled,
-    graphLength: (elements.get("trazo-senal").attributes.points || "").length,
+    graphLength: (elements.get("trazo-senal").attributes.d || "").length,
     deviceStatus: elements.get("estado-dispositivo").textContent,
     physicalStatus: elements.get("estado-fisico").textContent,
     timeAxis: elements.get("tiempo-total").textContent,
@@ -412,6 +417,349 @@ def _run_frontend_interaction_test(ecg_client, scenario):
     return json.loads(completed.stdout)
 
 
+_ASSESSMENT_RENDER_HARNESS = r"""
+const vm = require("node:vm");
+const input = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+const elements = new Map();
+class Element {
+  constructor(id) {
+    this.id = id;
+    this.dataset = {};
+    this.attributes = {};
+    this.textContent = "";
+  }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  removeAttribute(name) { delete this.attributes[name]; }
+  replaceChildren(...children) { this.children = children; }
+}
+class NodeListMock {
+  constructor(items) {
+    this.items = items;
+  }
+  [Symbol.iterator]() { return this.items[Symbol.iterator](); }
+  forEach(callback) { this.items.forEach(callback); }
+}
+const idPattern = /\bid="([^"]+)"/g;
+for (const match of input.html.matchAll(idPattern)) {
+  elements.set(match[1], new Element(match[1]));
+}
+const cards = [];
+for (const match of input.html.matchAll(/<li\b([^>]*)>/g)) {
+  const attributes = match[1];
+  if (!/\bclass="[^"]*\bassessment-state\b[^"]*"/.test(attributes)) continue;
+  const card = new Element(attributes.match(/\bid="([^"]+)"/)[1]);
+  card.dataset.nivel = attributes.match(/\bdata-nivel="([^"]+)"/)[1];
+  card.dataset.color = attributes.match(/\bdata-color="([^"]+)"/)[1];
+  cards.push(card);
+  elements.set(card.id, card);
+}
+const app = {
+  querySelector(selector) { return elements.get(selector.slice(1)); },
+  querySelectorAll(selector) {
+    if (selector === ".assessment-state") return new NodeListMock(cards);
+    throw new Error(`Selector no preparado: ${selector}`);
+  },
+};
+const start = input.javascript.indexOf("  function renderAssessmentList(");
+const end = input.javascript.indexOf("  function actualizarCapturaGuardada(", start);
+if (start < 0 || end < 0) throw new Error("No se encontró el renderizador preventivo.");
+const context = { app, document: { createElement: (tag) => new Element(tag) } };
+vm.runInNewContext(input.javascript.slice(start, end), context, { timeout: 5000 });
+context.renderPreventiveAssessment({ evaluacion_preventiva: input.assessment });
+process.stdout.write(JSON.stringify({
+  cards: cards.map((card) => ({
+    nivel: card.dataset.nivel,
+    color: card.dataset.color,
+    selected: card.attributes["aria-current"] === "true",
+  })),
+  panelColor: elements.get("evaluacion-preventiva").dataset.color,
+  nivel: elements.get("evaluacion-nivel").textContent,
+  motivo: elements.get("evaluacion-motivo").textContent,
+  datosTecnicos: elements.get("evaluacion-datos-tecnicos").textContent,
+}));
+"""
+
+
+def _render_preventive_assessment(ecg_client, assessment):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Se necesita Node.js para probar el renderizado del semáforo ECG.")
+
+    completed = subprocess.run(
+        [node, "-e", _ASSESSMENT_RENDER_HARNESS],
+        input=json.dumps(
+            {
+                "html": ecg_client.get("/api/v1/ecg/pantalla").text,
+                "javascript": ecg_client.get("/api/v1/ecg/frontend.js").text,
+                "assessment": assessment,
+            }
+        ),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+_SENSOR_PERSISTENCE_POLL_HARNESS = r"""
+const vm = require("node:vm");
+const input = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+const values = new Map([
+  ["estado-captura", { textContent: "" }],
+  ["estado-guardado", { textContent: "" }],
+  ["estado-dispositivo", { textContent: "" }],
+  ["estado-fisico", { textContent: "" }],
+  ["error", { hidden: true }],
+  ["mensaje-error", { textContent: "" }],
+]);
+const app = { querySelector: (selector) => values.get(selector.slice(1)) };
+let queryCount = 0;
+const confirmed = [];
+const context = {
+  API: "/api/v1",
+  MUESTRAS_CAPTURA: 2500,
+  episodioActivo: { id: input.deviceState.episodio_id },
+  app,
+  requestJson: async () => {
+    queryCount += 1;
+    return input.httpResponse;
+  },
+  readDeviceState: async () => input.deviceState,
+  setDeviceConnection: (status, detail) => {
+    values.get("estado-dispositivo").textContent = `${status} ${detail}`;
+  },
+  updateLiveSignal: () => {},
+  updateStartButton: () => {},
+  setStatus: (message) => { values.get("estado-fisico").textContent = message; },
+  reportError: (error) => {
+    values.get("mensaje-error").textContent = error.message;
+    values.get("error").hidden = false;
+  },
+  updateLiveSignalTrace: () => {},
+  markLiveSignalDiscontinuity: () => {},
+  liveSignalBuffer: {},
+  esp32BaseUrl: "http://esp32.local",
+  isCapturing: true,
+  pollingGeneration: 1,
+  pollingTimer: null,
+  acquisitionId: null,
+  sensorCapturesById: new Map(),
+  actualizarListaCapturasFisicas: () => {},
+  stopPolling: () => { context.isCapturing = false; },
+  actualizarCapturaGuardada: (result) => {
+    confirmed.push(result);
+    values.get("estado-guardado").textContent =
+      `Resultado guardado: la API confirmó la captura #${result.id}.`;
+  },
+  window: { setTimeout: () => 1 },
+};
+const helperStart = input.javascript.indexOf(
+  "  async function obtenerResultadosPersistidos()"
+);
+const helperEnd = input.javascript.indexOf(
+  "\n  function capturaSensorValida(", helperStart
+);
+const pollStart = input.javascript.indexOf("  async function pollAcquisition(");
+const pollEnd = input.javascript.indexOf(
+  "\n  async function esperarElectrodos(", pollStart
+);
+if (helperStart < 0 || helperEnd < 0 || pollStart < 0 || pollEnd < 0) {
+  throw new Error("No se encontraron las funciones de consulta y polling.");
+}
+vm.runInNewContext(
+  input.javascript.slice(helperStart, helperEnd) +
+    input.javascript.slice(pollStart, pollEnd),
+  context,
+  { timeout: 5000 }
+);
+context.pollAcquisition("http://esp32.local", 1).then(() => {
+  process.stdout.write(JSON.stringify({
+    queryCount,
+    confirmed: confirmed.length === 1,
+    resultId: confirmed[0]?.id ?? null,
+    guardStatus: values.get("estado-guardado").textContent,
+    errorVisible: !values.get("error").hidden,
+    error: values.get("mensaje-error").textContent,
+    status: values.get("estado-fisico").textContent,
+  }));
+}).catch((error) => {
+  process.stderr.write(error.stack || String(error));
+  process.exitCode = 1;
+});
+"""
+
+
+def _run_sensor_persistence_poll(ecg_client, http_response, acquisition_id):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Se necesita Node.js para probar el polling de persistencia ECG.")
+
+    completed = subprocess.run(
+        [node, "-e", _SENSOR_PERSISTENCE_POLL_HARNESS],
+        input=json.dumps(
+            {
+                "javascript": ecg_client.get("/api/v1/ecg/frontend.js").text,
+                "httpResponse": http_response,
+                "deviceState": {
+                    "episodio_id": http_response["episodio_id"],
+                    "adquisicion_id": acquisition_id,
+                    "backend_conectado": True,
+                    "electrodos_conectados": True,
+                    "adquisicion_en_curso": False,
+                    "captura_pendiente": True,
+                    "cantidad_muestras": MUESTRAS_CAPTURA_SENSOR,
+                    "codigo_http": 201,
+                    "mensaje": "Resultado guardado correctamente",
+                },
+            }
+        ),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+_LIVE_SIGNAL_BUFFER_HARNESS = r"""
+const vm = require("node:vm");
+const input = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+const context = {
+  GRAFICA_X_INICIO: 72,
+  GRAFICA_X_FIN: 620,
+  GRAFICA_Y_INICIO: 20,
+  GRAFICA_Y_FIN: 160,
+  GRAFICA_PASO_X: 548 / 2500,
+  app: {
+    querySelector: (selector) => displayElements.get(selector),
+  },
+  isCapturing: true,
+  liveSignalFrame: null,
+  window: {
+    requestAnimationFrame(callback) {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    },
+    cancelAnimationFrame() {},
+  },
+};
+const animationFrames = [];
+const displayElements = new Map([
+  "#amplitud-maxima", "#amplitud-centro-escala", "#amplitud-minima",
+  "#unidad-eje", "#estado-escala-vertical", "#estado-integridad-senal",
+].map((selector) => [selector, { textContent: "" }]));
+displayElements.set("#trazo-grupo", {
+  attributes: {},
+  setAttribute(name, value) { this.attributes[name] = value; },
+});
+const start = input.javascript.indexOf("  function createLiveSignalBuffer(");
+const end = input.javascript.indexOf("  function stopLiveSignalAnimation(", start);
+if (start < 0 || end < 0) throw new Error("No se encontró el búfer circular ECG.");
+vm.runInNewContext(input.javascript.slice(start, end), context, { timeout: 5000 });
+const buffer = context.createLiveSignalBuffer(2500);
+for (let count = 250; count <= 3000; count += 250) {
+  context.appendLiveSignalState(buffer, {
+    adquisicion_id: "captura-prueba",
+    cantidad_muestras: count,
+    muestras: Array.from({ length: count }, (_, index) => index % 4096),
+    frecuencia_muestreo_hz: 250,
+    unidad: "ADC",
+  }, count * 4);
+}
+const path = context.liveSignalPath(buffer);
+context.liveSignalBuffer = buffer;
+context.animateLiveSignal();
+animationFrames.shift()(12000);
+const frameOffset = displayElements.get("#trazo-grupo").attributes.transform;
+animationFrames.shift()(13000);
+const nextFrameOffset = displayElements.get("#trazo-grupo").attributes.transform;
+const gapBuffer = context.createLiveSignalBuffer(2500);
+context.appendLiveSignalState(gapBuffer, {
+  adquisicion_id: "captura-gap",
+  cantidad_muestras: 2,
+  muestras: [1000, 1001],
+  frecuencia_muestreo_hz: 250,
+  unidad: "ADC",
+}, 0);
+context.markLiveSignalDiscontinuity(gapBuffer);
+context.appendLiveSignalState(gapBuffer, {
+  adquisicion_id: "captura-gap",
+  cantidad_muestras: 4,
+  muestras: [1000, 1001, 1002, 1003],
+  frecuencia_muestreo_hz: 250,
+  unidad: "ADC",
+}, 1000);
+const completeBuffer = context.createLiveSignalBuffer(2500);
+const completeSamples = Array.from({ length: 2500 }, (_, index) =>
+  Math.round(index * 4095 / 2499)
+);
+context.appendLiveSignalState(completeBuffer, {
+  adquisicion_id: "captura-completa",
+  cantidad_muestras: 2500,
+  muestras: completeSamples,
+  frecuencia_muestreo_hz: 250,
+  unidad: "ADC",
+}, 10000);
+const probeBuffer = context.createLiveSignalBuffer(3);
+context.appendLiveSignalState(probeBuffer, {
+  adquisicion_id: "captura-sonda",
+  cantidad_muestras: 3,
+  muestras: [0, 2048, 4095],
+  frecuencia_muestreo_hz: 250,
+  unidad: "ADC",
+}, 0);
+const centeredScale = context.visualAmplitudeScale([1800, 2048, 2300]);
+context.updateSignalScaleStatus([0, 2048, 4095], 2047.5);
+process.stdout.write(JSON.stringify({
+  size: buffer.size,
+  capacity: buffer.capacity,
+  firstSequence: buffer.sequences[buffer.head],
+  lastSequence: buffer.lastSequence,
+  retainedSequences: Array.from({ length: buffer.size }, (_, offset) =>
+    buffer.sequences[(buffer.head + offset) % buffer.capacity]
+  ),
+  pathCommands: (path.match(/[ML]/g) || []).length,
+  offsetAtSample: context.liveSignalOffset(buffer, 12000),
+  offsetOneSecondLater: context.liveSignalOffset(buffer, 13000),
+  frameOffset,
+  nextFrameOffset,
+  gapMoves: (context.liveSignalPath(gapBuffer).match(/M/g) || []).length,
+  gapCount: gapBuffer.discontinuitiesCount,
+  uniqueSequences: new Set(buffer.sequences.slice(0, buffer.size)).size,
+  nominalWindowSeconds: completeBuffer.size / completeBuffer.frequency,
+  completePath: context.liveSignalPath(completeBuffer),
+  probePath: context.liveSignalPath(probeBuffer),
+  centeredScale,
+  saturationStatus: displayElements.get("#estado-escala-vertical").textContent,
+}));
+"""
+
+
+def _simulate_live_signal_buffer(ecg_client):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Se necesita Node.js para probar el búfer visual ECG.")
+
+    completed = subprocess.run(
+        [node, "-e", _LIVE_SIGNAL_BUFFER_HARNESS],
+        input=json.dumps(
+            {"javascript": ecg_client.get("/api/v1/ecg/frontend.js").text}
+        ),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
 def test_esquema_y_simulador_generan_datos_ecg_validos():
     datos = generar_datos_ecg()
 
@@ -425,6 +773,317 @@ def test_esquema_y_simulador_generan_datos_ecg_validos():
     assert datos["frecuencia_muestreo_hz"] == 250
     assert len(datos["muestras"]) == 2500
     assert all(math.isfinite(muestra) for muestra in datos["muestras"])
+
+
+def test_evaluacion_preventiva_no_clasifica_como_normal_senal_adc_actual():
+    datos = DatosECG(
+        frecuencia_muestreo_hz=250,
+        muestras=[2048] * MUESTRAS_CAPTURA_SENSOR,
+        unidad="ADC",
+    )
+
+    evaluacion = evaluar_captura_preventiva(datos)
+
+    assert evaluacion.nivel == "NO_EVALUABLE"
+    assert evaluacion.color == "GRIS"
+    assert evaluacion.parametros_evaluados == []
+    assert evaluacion.valores_medidos == {}
+    assert evaluacion.criterios_activados == []
+    assert evaluacion.calidad_senal == "NO EVALUADA"
+    assert evaluacion.datos_tecnicos.cantidad_muestras == MUESTRAS_CAPTURA_SENSOR
+    assert evaluacion.datos_tecnicos.frecuencia_muestreo_hz == 250
+    assert any("al menos 500 Hz" in item for item in evaluacion.advertencias_tecnicas)
+    assert any("no se convierten a mV" in item for item in evaluacion.advertencias_tecnicas)
+    assert "normalidad" in evaluacion.motivo
+    assert len(evaluacion.parametros_no_evaluables) == 9
+    assert all(
+        f"RC-ECG-{rule_id:03d}" in evaluacion.parametros_no_evaluables[rule_id - 1]
+        for rule_id in range(1, 10)
+    )
+    assert "LO+/LO−" in evaluacion.parametros_no_evaluables[0]
+    assert "250 Hz" in evaluacion.motivo
+    assert evaluacion.metricas_tecnicas.duracion_entre_muestras_segundos == pytest.approx(
+        (MUESTRAS_CAPTURA_SENSOR - 1) / 250
+    )
+    assert evaluacion.metricas_tecnicas.amplitud_minima == 2048
+    assert evaluacion.metricas_tecnicas.amplitud_maxima == 2048
+    assert evaluacion.metricas_tecnicas.amplitud_rango == 0
+    assert evaluacion.metricas_tecnicas.muestras_distintas == 1
+    assert evaluacion.metricas_tecnicas.muestras_adc_en_riel_inferior == 0
+    assert evaluacion.metricas_tecnicas.muestras_adc_en_riel_superior == 0
+
+
+def test_evaluacion_preventiva_muestras_incompletas_sigue_no_evaluable():
+    datos = DatosECG(
+        frecuencia_muestreo_hz=250,
+        muestras=[0.1],
+        unidad="mV",
+    )
+
+    evaluacion = evaluar_captura_preventiva(datos)
+
+    assert evaluacion.nivel == "NO_EVALUABLE"
+    assert evaluacion.color == "GRIS"
+    assert evaluacion.datos_tecnicos.cantidad_muestras == 1
+    assert evaluacion.parametros_evaluados == []
+    assert evaluacion.calidad_senal == "NO EVALUADA"
+
+
+def test_evaluacion_preventiva_no_pasa_a_verde_solo_por_superar_frecuencia():
+    datos = DatosECG(
+        frecuencia_muestreo_hz=500,
+        muestras=[0.0] * 2500,
+        unidad="mV",
+    )
+
+    evaluacion = evaluar_captura_preventiva(datos)
+
+    assert evaluacion.nivel == "NO_EVALUABLE"
+    assert evaluacion.color == "GRIS"
+    assert evaluacion.parametros_evaluados == []
+    assert evaluacion.valores_medidos == {}
+    assert all(
+        f"RC-ECG-{rule_id:03d}" in evaluacion.parametros_no_evaluables[rule_id - 1]
+        for rule_id in range(1, 10)
+    )
+    assert "menor que 500 Hz" not in evaluacion.parametros_no_evaluables[1]
+
+
+@pytest.mark.parametrize(
+    ("frequency", "expects_below_minimum"),
+    [(499, True), (500, False), (501, False)],
+)
+def test_frecuencia_minima_documentada_no_habilita_clasificacion_clinica(
+    frequency, expects_below_minimum
+):
+    datos = DatosECG(
+        frecuencia_muestreo_hz=frequency,
+        muestras=[0.0] * frequency,
+        unidad="mV",
+    )
+
+    evaluation = evaluar_captura_preventiva(datos)
+    quality_requirement = evaluation.parametros_no_evaluables[1]
+
+    assert evaluation.nivel == "NO_EVALUABLE"
+    assert evaluation.color == "GRIS"
+    assert ("menor que 500 Hz" in quality_requirement) is expects_below_minimum
+
+
+@pytest.mark.parametrize(
+    ("samples", "low_rail_count", "high_rail_count"),
+    [
+        ([0, 1, 2048, 4094, 4095], 1, 1),
+        ([1, 2048, 4094], 0, 0),
+        ([0, 0, 4095, 4095], 2, 2),
+    ],
+)
+def test_metricas_tecnicas_cuentan_saturacion_adc_en_extremos(
+    samples, low_rail_count, high_rail_count
+):
+    datos = DatosECG(
+        frecuencia_muestreo_hz=250,
+        muestras=samples,
+        unidad="ADC",
+    )
+
+    metrics = evaluar_captura_preventiva(datos).metricas_tecnicas
+
+    assert metrics.amplitud_minima == min(samples)
+    assert metrics.amplitud_maxima == max(samples)
+    assert metrics.amplitud_rango == max(samples) - min(samples)
+    assert metrics.muestras_distintas == len(set(samples))
+    assert metrics.muestras_adc_en_riel_inferior == low_rail_count
+    assert metrics.muestras_adc_en_riel_superior == high_rail_count
+
+
+def test_metricas_tecnicas_no_inventan_rieles_para_muestras_mv():
+    datos = DatosECG(
+        frecuencia_muestreo_hz=500,
+        muestras=[-0.1, 0.0, 0.2],
+        unidad="mV",
+    )
+
+    evaluation = evaluar_captura_preventiva(datos)
+    metrics = evaluation.metricas_tecnicas
+
+    assert metrics.muestras_adc_en_riel_inferior is None
+    assert metrics.muestras_adc_en_riel_superior is None
+    assert metrics.duracion_entre_muestras_segundos == pytest.approx(2 / 500)
+    assert evaluation.nivel == "NO_EVALUABLE"
+    assert evaluation.color == "GRIS"
+
+
+def test_frontend_presenta_metricas_tecnicas_devueltas_por_backend(ecg_client):
+    datos = DatosECG(
+        frecuencia_muestreo_hz=250,
+        muestras=[0, 100, 4095],
+        unidad="ADC",
+    )
+    assessment = evaluar_captura_preventiva(datos)
+
+    rendered = _render_preventive_assessment(
+        ecg_client, assessment.model_dump(mode="json")
+    )
+
+    assert "3 muestras · 250 Hz · ADC" in rendered["datosTecnicos"]
+    assert "intervalo entre muestras: 0.008 s" in rendered["datosTecnicos"]
+    assert "rango: 0–4095 (4095)" in rendered["datosTecnicos"]
+    assert "muestras ADC en 0/4095: 1/1" in rendered["datosTecnicos"]
+
+
+@pytest.mark.parametrize(
+    ("nivel", "color"),
+    [
+        ("VERDE", "VERDE"),
+        ("AMARILLO", "AMARILLO"),
+        ("ROJO", "ROJO"),
+        ("NO_EVALUABLE", "GRIS"),
+    ],
+)
+def test_esquema_evaluacion_admite_los_cuatro_estados(nivel, color):
+    evaluacion = EvaluacionPreventivaECG(
+        nivel=nivel,
+        color=color,
+        motivo="Justificación del estado recibido.",
+        parametros_evaluados=["PR"] if nivel == "VERDE" else [],
+        valores_medidos={"PR_ms": 160} if nivel == "VERDE" else {},
+        criterios_activados=[],
+        parametros_no_evaluables=[],
+        calidad_senal="NO EVALUADA",
+        datos_tecnicos={
+            "frecuencia_muestreo_hz": 250,
+            "cantidad_muestras": MUESTRAS_CAPTURA_SENSOR,
+            "unidad": "ADC",
+        },
+        advertencias_tecnicas=[],
+    )
+
+    assert evaluacion.nivel == nivel
+    assert evaluacion.color == color
+
+
+@pytest.mark.parametrize(
+    ("nivel", "color", "parametros_evaluados", "valores_medidos"),
+    [
+        ("VERDE", "GRIS", ["PR"], {"PR_ms": 160}),
+        ("VERDE", "VERDE", [], {}),
+    ],
+)
+def test_esquema_rechaza_estado_inconsistente_o_verde_sin_mediciones(
+    nivel, color, parametros_evaluados, valores_medidos
+):
+    with pytest.raises(ValidationError):
+        EvaluacionPreventivaECG(
+            nivel=nivel,
+            color=color,
+            motivo="Justificación del estado recibido.",
+            parametros_evaluados=parametros_evaluados,
+            valores_medidos=valores_medidos,
+            criterios_activados=[],
+            parametros_no_evaluables=[],
+            calidad_senal="NO EVALUADA",
+            datos_tecnicos={
+                "frecuencia_muestreo_hz": 250,
+                "cantidad_muestras": MUESTRAS_CAPTURA_SENSOR,
+                "unidad": "ADC",
+            },
+            advertencias_tecnicas=[],
+        )
+
+
+@pytest.mark.parametrize(
+    ("nivel", "color"),
+    [
+        ("VERDE", "VERDE"),
+        ("AMARILLO", "AMARILLO"),
+        ("ROJO", "ROJO"),
+        ("NO_EVALUABLE", "GRIS"),
+    ],
+)
+def test_frontend_destaca_estado_y_motivo_recibidos_del_backend(
+    ecg_client, nivel, color
+):
+    assessment = EvaluacionPreventivaECG(
+        nivel=nivel,
+        color=color,
+        motivo=f"Motivo recibido para {nivel}.",
+        parametros_evaluados=["PR"] if nivel == "VERDE" else [],
+        valores_medidos={"PR_ms": 160} if nivel == "VERDE" else {},
+        criterios_activados=[],
+        parametros_no_evaluables=[],
+        calidad_senal="NO EVALUADA",
+        datos_tecnicos={
+            "frecuencia_muestreo_hz": 250,
+            "cantidad_muestras": MUESTRAS_CAPTURA_SENSOR,
+            "unidad": "ADC",
+        },
+        advertencias_tecnicas=[],
+    )
+
+    rendered = _render_preventive_assessment(
+        ecg_client, assessment.model_dump(mode="json")
+    )
+
+    assert sum(card["selected"] for card in rendered["cards"]) == 1
+    selected = next(card for card in rendered["cards"] if card["selected"])
+    assert (selected["nivel"], selected["color"]) == (nivel, color)
+    assert rendered["nivel"].startswith(nivel)
+    assert rendered["nivel"].endswith(color)
+    assert rendered["motivo"] == f"Motivo recibido para {nivel}."
+    assert rendered["panelColor"] == color.lower()
+
+
+def test_frontend_captura_actual_se_muestra_gris(ecg_client):
+    data = DatosECG(
+        frecuencia_muestreo_hz=250,
+        muestras=[2048] * MUESTRAS_CAPTURA_SENSOR,
+        unidad="ADC",
+    )
+    assessment = evaluar_captura_preventiva(data)
+
+    rendered = _render_preventive_assessment(
+        ecg_client, assessment.model_dump(mode="json")
+    )
+
+    selected = [card for card in rendered["cards"] if card["selected"]]
+    assert [(card["nivel"], card["color"]) for card in selected] == [
+        ("NO_EVALUABLE", "GRIS")
+    ]
+    assert rendered["nivel"].startswith("NO_EVALUABLE")
+    assert rendered["nivel"].endswith("GRIS")
+    assert rendered["motivo"] == assessment.motivo
+
+
+def test_frontend_datos_incompletos_no_se_muestran_verdes(ecg_client):
+    rendered = _render_preventive_assessment(
+        ecg_client,
+        {"nivel": "VERDE", "color": "VERDE", "motivo": "Sin alertas."},
+    )
+
+    selected = [card for card in rendered["cards"] if card["selected"]]
+    assert [(card["nivel"], card["color"]) for card in selected] == [
+        ("NO_EVALUABLE", "GRIS")
+    ]
+    assert rendered["nivel"].startswith("NO EVALUABLE")
+    assert rendered["nivel"].endswith("GRIS")
+    assert "no se puede inferir normalidad" in rendered["motivo"]
+
+
+def test_evaluacion_preventiva_no_infiere_calidad_ni_alerta_desde_muestras_ruidosas():
+    datos = DatosECG(
+        frecuencia_muestreo_hz=250,
+        muestras=[0, 4095, 0, 4095],
+        unidad="ADC",
+    )
+
+    evaluacion = evaluar_captura_preventiva(datos)
+
+    assert evaluacion.nivel == "NO_EVALUABLE"
+    assert evaluacion.calidad_senal == "NO EVALUADA"
+    assert evaluacion.valores_medidos == {}
+    assert any("SNR <15 dB" in item for item in evaluacion.parametros_no_evaluables)
+    assert any("Ruido eléctrico e interferencias" in item for item in evaluacion.advertencias_tecnicas)
 
 
 def _indices_picos_sinteticos(muestras):
@@ -865,6 +1524,92 @@ def test_get_resultados_del_episodio(ecg_client, ecg_references):
     assert respuesta.resultados[0].id == guardado.json()["resultado_id"]
     assert respuesta.resultados[0].data.model_dump(exclude_none=True) == entrada["data"]
     assert "adquisicion_id" not in response.json()["resultados"][0]["data"]
+    evaluacion = respuesta.resultados[0].evaluacion_preventiva
+    assert evaluacion.nivel == "NO_EVALUABLE"
+    assert evaluacion.color == "GRIS"
+    assert evaluacion.datos_tecnicos.cantidad_muestras == len(entrada["data"]["muestras"])
+
+
+def test_get_resultados_agrega_evaluacion_sin_modificar_datos_persistidos(
+    ecg_client, ecg_references, test_engine
+):
+    entrada = _entrada_sensor_valida(ecg_references)
+    guardado = ecg_client.post(RUTA, json=entrada)
+
+    response = ecg_client.get(f"{RUTA}/{ecg_references['episodio_id']}")
+
+    assert response.status_code == 200
+    result = response.json()["resultados"][0]
+    assert result["id"] == guardado.json()["resultado_id"]
+    assert result["evaluacion_preventiva"]["nivel"] == "NO_EVALUABLE"
+    assert result["evaluacion_preventiva"]["datos_tecnicos"] == {
+        "frecuencia_muestreo_hz": 250,
+        "cantidad_muestras": MUESTRAS_CAPTURA_SENSOR,
+        "unidad": "ADC",
+    }
+    with Session(test_engine) as session:
+        stored = session.exec(select(ResultadoModulo)).one()
+    assert json.loads(stored.data_json) == entrada["data"]
+
+
+def test_flujo_sensor_adquisicion_guardado_consulta_y_confirmacion_frontend(
+    ecg_client, ecg_references
+):
+    entrada = _entrada_sensor_valida(
+        ecg_references,
+        adquisicion_id="00000000-0000-4000-8000-000000000123",
+    )
+
+    guardado = ecg_client.post(RUTA, json=entrada)
+    assert guardado.status_code == 201
+    resultado_id = guardado.json()["resultado_id"]
+
+    consulta = ecg_client.get(
+        f"{RUTA}/{ecg_references['episodio_id']}"
+    )
+    assert consulta.status_code == 200
+    body = consulta.json()
+    assert body["episodio_id"] == ecg_references["episodio_id"]
+    assert body["modulo"] == "ecg"
+    assert isinstance(body["resultados"], list)
+    result = next(item for item in body["resultados"] if item["id"] == resultado_id)
+    assert result["data"]["adquisicion_id"] == entrada["data"]["adquisicion_id"]
+    assert result["data"]["frecuencia_muestreo_hz"] == 250
+    assert result["data"]["unidad"] == "ADC"
+    assert len(result["data"]["muestras"]) == MUESTRAS_CAPTURA_SENSOR
+    assert result["evaluacion_preventiva"]["nivel"] == "NO_EVALUABLE"
+    assert result["evaluacion_preventiva"]["color"] == "GRIS"
+
+    frontend = _run_sensor_persistence_poll(
+        ecg_client, body, entrada["data"]["adquisicion_id"]
+    )
+    assert frontend["queryCount"] == 1
+    assert frontend["confirmed"] is True, frontend
+    assert frontend["resultId"] == resultado_id
+    assert f"#{resultado_id}" in frontend["guardStatus"]
+    assert frontend["errorVisible"] is False
+
+
+def test_consulta_ecg_invalida_no_confirma_captura(
+    ecg_client, ecg_references
+):
+    invalid_response = {
+        "episodio_id": ecg_references["episodio_id"],
+        "modulo": "ecg",
+        "resultados": {"id": 12},
+    }
+
+    frontend = _run_sensor_persistence_poll(
+        ecg_client,
+        invalid_response,
+        "00000000-0000-4000-8000-000000000124",
+    )
+
+    assert frontend["queryCount"] == 1
+    assert frontend["confirmed"] is False
+    assert frontend["guardStatus"] == "No se confirmó un resultado guardado."
+    assert frontend["errorVisible"] is True
+    assert "resultados incompatibles" in frontend["error"]
 
 
 def test_get_episodio_existente_sin_resultados_devuelve_lista_vacia(
@@ -911,6 +1656,96 @@ def test_pantalla_ecg_muestra_el_contexto_sin_datos_de_simulacion(ecg_client):
     assert 'id="episodio-inicio"' in html
     assert "episodio real" in html
     assert "simulación" not in html.lower()
+
+
+def test_pantalla_ecg_expone_no_evaluable_y_avisos_permanentes(ecg_client):
+    html = ecg_client.get("/api/v1/ecg/pantalla").text
+    javascript = ecg_client.get("/api/v1/ecg/frontend.js").text
+
+    assert 'id="evaluacion-preventiva"' in html
+    assert 'id="evaluacion-nivel"' in html
+    assert 'id="evaluacion-parametros-pendientes"' in html
+    assert 'id="evaluacion-advertencias"' in html
+    assert "NO EVALUABLE" in html
+    assert "una sola señal del AD8232" in html
+    assert "12 derivaciones" in html
+    assert "eje eléctrico frontal" in html
+    assert "Ruido eléctrico e interferencias" in html
+    assert "no equivale a una alerta clínica" in html
+    assert "renderPreventiveAssessment(result)" in javascript
+    assert html.count('class="assessment-state"') == 4
+    assert 'assessment?.nivel' in javascript
+    assert 'assessment?.color' in javascript
+    assert 'assessment.motivo.trim()' in javascript
+
+
+def test_grafica_ecg_mantiene_ventana_deslizante_de_diez_segundos(ecg_client):
+    result = _simulate_live_signal_buffer(ecg_client)
+
+    assert result["capacity"] == result["size"] == 2500
+    assert result["lastSequence"] - result["firstSequence"] == 2499
+    assert result["pathCommands"] == 2500
+    assert result["firstSequence"] == 500
+    assert result["lastSequence"] == 2999
+    assert result["offsetOneSecondLater"] < result["offsetAtSample"]
+    assert result["frameOffset"] != result["nextFrameOffset"]
+    assert float(result["frameOffset"].split("(")[1].split()[0]) == 620
+    assert float(result["nextFrameOffset"].split("(")[1].split()[0]) < 620
+    assert result["uniqueSequences"] == 2500
+    assert result["gapCount"] == 1
+    html = ecg_client.get("/api/v1/ecg/pantalla").text
+    assert 'id="tiempo-total"' in html
+    assert ">10 s</text>" in html
+    assert 'id="trazo-senal" d=""' in html
+    assert 'clip-path="url(#recorte-senal)"' in html
+    assert 'id="ecg-subdivisiones"' in html
+    assert 'id="ecg-divisiones-principales"' in html
+
+
+def test_grafica_ecg_mapea_las_2500_muestras_a_ventana_nominal_de_diez_segundos(
+    ecg_client,
+):
+    result = _simulate_live_signal_buffer(ecg_client)
+
+    assert result["nominalWindowSeconds"] == 10
+    assert result["completePath"].startswith("M-547.78,160.00")
+    assert result["completePath"].endswith("L0.00,20.00")
+
+
+def test_grafica_ecg_centra_la_linea_base_y_autoajusta_solo_la_presentacion(ecg_client):
+    result = _simulate_live_signal_buffer(ecg_client)
+    expected_points = []
+    for index, sample in enumerate([0, 2048, 4095]):
+        x = (index - 2) * (548 / 2500)
+        y = 90 - ((sample - 2047.5) / 2047.5) * 70
+        expected_points.append(
+            f"{'M' if index == 0 else 'L'}{x:.2f},{y:.2f}"
+        )
+
+    assert result["probePath"] == " ".join(expected_points)
+    assert result["centeredScale"] == {"baseline": 2050, "amplitude": 250}
+    assert "línea base visual ADC: 2047.5" in result["saturationStatus"]
+    assert "Fuente ADC cruda; no convertida a mV." in result["saturationStatus"]
+    assert "Muestras en rieles 0/4095: 1/1" in result["saturationStatus"]
+    html = ecg_client.get("/api/v1/ecg/pantalla").text
+    assert 'id="escala-vertical"' not in html
+    assert "Completa:" not in html
+    assert "Reducida:" not in html
+    assert "no representa papel ECG calibrado" in html
+    assert "sin unidad calibrada" in html
+    assert "Desviación visual centrada" in html
+
+
+def test_grafica_ecg_no_conecta_muestras_tras_desconexion(ecg_client):
+    result = _simulate_live_signal_buffer(ecg_client)
+
+    assert result["gapMoves"] == 2
+
+
+def test_grafica_ecg_conserva_todas_las_muestras_dentro_de_la_ventana(ecg_client):
+    result = _simulate_live_signal_buffer(ecg_client)
+
+    assert result["retainedSequences"] == list(range(500, 3000))
 
 
 def test_pantalla_transversal_no_solicita_paciente_sin_contexto(ecg_client):
@@ -1123,12 +1958,20 @@ def test_frontend_usa_solo_adquisicion_fisica_y_guarda_al_confirmar_api(ecg_clie
     assert response.headers["cache-control"] == "no-store"
     assert 'id="iniciar-ecg"' in html
     assert ">Iniciar ECG</button>" in html
-    assert 'id="esp32-url"' in html
+    assert 'id="esp32-url"' not in html
+    assert 'id="estado-dispositivo"' in html
+    assert 'id="estado-captura"' in html
     assert 'id="trazo-senal"' in html
     assert 'id="capturas-historicas"' in html
     assert "/configurar" in javascript
     assert "/iniciar" in javascript
     assert "/api/ecg" in javascript
+    assert "${API}/ecg/conexion" in javascript
+    assert '"DESCONECTADO"' in javascript
+    assert '"CONECTANDO"' in javascript
+    assert '"CONECTADO"' in javascript
+    assert '"ERROR"' in javascript
+    assert "la captura aún no está confirmada" in javascript
     assert "${API}/ecg/resultados/${episodioActivo.id}" in javascript
     assert "Resultado guardado: la API confirmó" in javascript
     assert "adquisicion_id" in javascript
@@ -1148,6 +1991,42 @@ def test_frontend_usa_solo_adquisicion_fisica_y_guarda_al_confirmar_api(ecg_clie
     results_query = javascript[javascript.index(results_url):]
     assert 'method: "POST"' not in results_query[:200]
     assert "Math.sin" not in javascript
+
+
+def test_descubrimiento_ecg_devuelve_dispositivos_mdns(ecg_client, monkeypatch):
+    class DiscoveryStub:
+        def dispositivos(self):
+            return [{"codigo": "ECG-001", "base_url": "http://192.168.0.42:80"}]
+
+    monkeypatch.setattr(
+        "app.modules.ecg.router.get_ecg_discovery",
+        lambda: DiscoveryStub(),
+    )
+
+    response = ecg_client.get("/api/v1/ecg/conexion")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "dispositivos": [
+            {"codigo": "ECG-001", "base_url": "http://192.168.0.42:80"}
+        ]
+    }
+
+
+def test_descubrimiento_ecg_informa_lista_vacia(ecg_client, monkeypatch):
+    class DiscoveryStub:
+        def dispositivos(self):
+            return []
+
+    monkeypatch.setattr(
+        "app.modules.ecg.router.get_ecg_discovery",
+        lambda: DiscoveryStub(),
+    )
+
+    response = ecg_client.get("/api/v1/ecg/conexion")
+
+    assert response.status_code == 200
+    assert response.json() == {"dispositivos": []}
 
 
 def test_frontend_conserva_navegacion_y_grafica_sin_controles_legacy(ecg_client):

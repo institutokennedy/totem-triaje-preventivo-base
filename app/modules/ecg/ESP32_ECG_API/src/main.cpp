@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <ESPmDNS.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_system.h>
@@ -12,7 +13,6 @@
 #else
 #define ECG_WIFI_SSID ""
 #define ECG_WIFI_PASSWORD ""
-#define ECG_API_BASE_URL ""
 #endif
 
 namespace {
@@ -25,6 +25,9 @@ constexpr int PERIODO_MUESTREO_MS = 1000 / FRECUENCIA_MUESTREO_HZ;
 constexpr size_t MUESTRAS_POR_CAPTURA = FRECUENCIA_MUESTREO_HZ * 10;
 constexpr unsigned long REINTENTO_ENVIO_MS = 5000;
 constexpr unsigned long TIMEOUT_HTTP_MS = 8000;
+constexpr unsigned long TIMEOUT_CONEXION_WIFI_MS = 15000;
+constexpr unsigned long INTERVALO_REINTENTO_WIFI_MS = 15000;
+constexpr unsigned long INTERVALO_REINTENTO_MDNS_MS = 5000;
 
 WebServer server(80);
 portMUX_TYPE capturaMux = portMUX_INITIALIZER_UNLOCKED;
@@ -41,6 +44,16 @@ volatile int bpmEstimadoExperimental = 0;
 int episodioId = 0;
 int dispositivoId = 0;
 bool configuracionWifiValida = false;
+bool servidorHttpIniciado = false;
+bool mdnsIniciado = false;
+bool wifiEstabaConectado = false;
+bool reintentoWifiPendiente = false;
+String apiHost;
+uint16_t apiPort = 0;
+unsigned long ultimoIntentoWifi = 0;
+unsigned long inicioReintentoWifi = 0;
+unsigned long ultimoIntentoMdns = 0;
+unsigned long ultimoDescubrimientoApi = 0;
 String adquisicionId;
 String ultimoMensaje = "Configure Wi-Fi y el episodio antes de iniciar.";
 unsigned long ultimoIntentoEnvio = 0;
@@ -232,24 +245,8 @@ String escaparJson(const String& valor) {
   return salida;
 }
 
-String origenApiConfigurado() {
-  String base = ECG_API_BASE_URL;
-  const int schemeEnd = base.indexOf("://");
-  if (schemeEnd < 0) return "";
-  const int pathStart = base.indexOf('/', schemeEnd + 3);
-  if (pathStart >= 0) base.remove(pathStart);
-  while (base.endsWith("/")) {
-    base.remove(base.length() - 1);
-  }
-  return base;
-}
-
 void aplicarCabecerasCors() {
-  const String origin = origenApiConfigurado();
-  if (!origin.isEmpty()) {
-    server.sendHeader("Access-Control-Allow-Origin", origin);
-    server.sendHeader("Vary", "Origin");
-  }
+  server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers", "Accept, Content-Type");
   server.sendHeader("Access-Control-Allow-Private-Network", "true");
@@ -355,7 +352,15 @@ void configurarEpisodio() {
 
 void iniciarAdquisicion() {
   if (!configuracionWifiValida) {
-    responderError(503, "Configure Wi-Fi y la URL de la API en ecg_config.h.");
+    responderError(503, "Configure Wi-Fi en include/ecg_config.h.");
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED || !mdnsIniciado) {
+    responderError(503, "El ESP32 no está conectado al Wi-Fi.");
+    return;
+  }
+  if (apiHost.isEmpty() || apiPort == 0) {
+    responderError(503, "No se encontró el servicio FastAPI mediante mDNS.");
     return;
   }
   if (episodioId <= 0) {
@@ -458,6 +463,11 @@ bool enviarCaptura() {
     ultimoMensaje = "Error de comunicación: Wi-Fi desconectado; se conserva la captura para reintentar.";
     return false;
   }
+  if (apiHost.isEmpty() || apiPort == 0) {
+    ultimoCodigoHttp = 0;
+    ultimoMensaje = "Error de comunicación: FastAPI no está disponible mediante mDNS.";
+    return false;
+  }
 
   size_t cantidad = 0;
   int episodio = 0;
@@ -495,11 +505,8 @@ bool enviarCaptura() {
   payload += "\"}}";
 
   HTTPClient http;
-  String apiBaseUrl = ECG_API_BASE_URL;
-  while (apiBaseUrl.endsWith("/")) {
-    apiBaseUrl.remove(apiBaseUrl.length() - 1);
-  }
-  const String url = apiBaseUrl + "/api/v1/ecg/resultados";
+  const String url = "http://" + apiHost + ":" + String(apiPort) +
+                     "/api/v1/ecg/resultados";
   http.setTimeout(TIMEOUT_HTTP_MS);
   if (!http.begin(url)) {
     ultimoCodigoHttp = 0;
@@ -603,6 +610,8 @@ void apiECG() {
   json += electrodos ? "true" : "false";
   json += ",\"wifi_conectado\":";
   json += (WiFi.status() == WL_CONNECTED ? "true" : "false");
+  json += ",\"backend_conectado\":";
+  json += (!apiHost.isEmpty() && apiPort > 0 ? "true" : "false");
   json += ",\"muestra_adc\":";
   json += String(ultimaMuestra);
   json += ",\"cantidad_muestras\":";
@@ -624,6 +633,10 @@ void apiECG() {
 }
 
 void configurarRutas() {
+  if (servidorHttpIniciado || WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
   server.on("/", HTTP_GET, []() {
     server.send_P(200, "text/html; charset=utf-8", PAGINA_WEB);
   });
@@ -635,25 +648,124 @@ void configurarRutas() {
   server.on("/iniciar", HTTP_OPTIONS, responderPreflight);
   server.on("/detener", HTTP_POST, detenerAdquisicion);
   server.on("/detener", HTTP_OPTIONS, responderPreflight);
+  Serial.println("Iniciando servidor HTTP...");
   server.begin();
+  servidorHttpIniciado = true;
+  Serial.println("Servidor HTTP iniciado en el puerto 80.");
+  Serial.println("Monitor ECG disponible en la dirección IP del ESP32.");
+}
+
+void actualizarServiciosMdns() {
+  const bool wifiConectado = WiFi.status() == WL_CONNECTED;
+  if (!wifiConectado) {
+    if (wifiEstabaConectado && mdnsIniciado) {
+      MDNS.end();
+    }
+    wifiEstabaConectado = false;
+    mdnsIniciado = false;
+    ultimoIntentoMdns = 0;
+    apiHost = "";
+    apiPort = 0;
+    return;
+  }
+
+  wifiEstabaConectado = true;
+  if (!mdnsIniciado) {
+    if (millis() - ultimoIntentoMdns < INTERVALO_REINTENTO_MDNS_MS) {
+      return;
+    }
+    ultimoIntentoMdns = millis();
+    mdnsIniciado = MDNS.begin("ecg-001");
+    if (!mdnsIniciado) {
+      Serial.println("Error: MDNS.begin(\"ecg-001\") no pudo iniciar mDNS.");
+      ultimoMensaje = "Error: no se pudo iniciar mDNS en el ESP32.";
+      return;
+    }
+
+    Serial.println("MDNS.begin(\"ecg-001\"): correcto.");
+    if (!MDNS.addService("ecg", "tcp", 80)) {
+      Serial.println("Error: no se pudo anunciar _ecg._tcp en el puerto 80.");
+      ultimoMensaje = "Error: no se pudo anunciar el servicio ECG por mDNS.";
+      MDNS.end();
+      mdnsIniciado = false;
+      return;
+    }
+    MDNS.addServiceTxt("ecg", "tcp", "codigo", "ECG-001");
+    Serial.println("Servicio _ecg._tcp anunciado en puerto 80 (codigo=ECG-001).");
+    ultimoMensaje = "Wi-Fi conectado; buscando FastAPI mediante mDNS.";
+  }
+
+  if (millis() - ultimoDescubrimientoApi < 5000) {
+    return;
+  }
+  ultimoDescubrimientoApi = millis();
+  const int servicios = MDNS.queryService("totem-api", "tcp");
+  for (int indice = 0; indice < servicios; ++indice) {
+    const IPAddress direccion = MDNS.address(indice);
+    const uint16_t puerto = MDNS.port(indice);
+    if (direccion != IPAddress(0, 0, 0, 0) && puerto > 0) {
+      apiHost = direccion.toString();
+      apiPort = puerto;
+      Serial.printf(
+          "Búsqueda _totem-api._tcp: FastAPI encontrado en %s:%u.\n",
+          apiHost.c_str(),
+          static_cast<unsigned int>(apiPort));
+      ultimoMensaje = "FastAPI encontrado mediante mDNS.";
+      return;
+    }
+  }
+  apiHost = "";
+  apiPort = 0;
+  Serial.println("Búsqueda _totem-api._tcp: FastAPI no encontrado.");
+  ultimoMensaje = "Wi-Fi conectado; FastAPI todavía no fue encontrado mediante mDNS.";
 }
 
 }  // namespace
 
 void setup() {
   Serial.begin(115200);
+  delay(1500);
+  Serial.println("=== INICIO ESP32 ECG ===");
+  Serial.println("Serial inicializado correctamente");
+  Serial.println("Configurando pines...");
   pinMode(LO_PLUS_PIN, INPUT);
   pinMode(LO_MINUS_PIN, INPUT);
   analogReadResolution(12);
   analogSetPinAttenuation(ECG_PIN, ADC_11db);
 
+  Serial.println("Configurando Wi-Fi...");
   configuracionWifiValida =
-      strlen(ECG_WIFI_SSID) > 0 && strlen(ECG_WIFI_PASSWORD) > 0 &&
-      strncmp(ECG_API_BASE_URL, "http://", 7) == 0;
+      strlen(ECG_WIFI_SSID) > 0 && strlen(ECG_WIFI_PASSWORD) > 0;
   if (configuracionWifiValida) {
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
+    ultimoIntentoWifi = millis();
     WiFi.begin(ECG_WIFI_SSID, ECG_WIFI_PASSWORD);
+
+    const unsigned long inicioConexion = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+      const unsigned long transcurrido = millis() - inicioConexion;
+      if (transcurrido >= TIMEOUT_CONEXION_WIFI_MS) {
+        break;
+      }
+      const unsigned long restante =
+          TIMEOUT_CONEXION_WIFI_MS - transcurrido;
+      delay(restante < 250 ? restante : 250);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("Wi-Fi conectado correctamente.");
+      Serial.print("Dirección IP del ESP32: ");
+      Serial.println(WiFi.localIP());
+      direccionIpMostrada = true;
+      wifiEstabaConectado = true;
+      configurarRutas();
+    } else {
+      Serial.print("Wi-Fi no conectado en 15 segundos. Estado: ");
+      Serial.println(static_cast<int>(WiFi.status()));
+      Serial.println("Se reintentará la conexión Wi-Fi desde loop().");
+      ultimoIntentoWifi = millis();
+    }
   } else {
     Serial.println(
         "Falta include/ecg_config.h: copie ecg_config.h.example y configure Wi-Fi y API.");
@@ -661,7 +773,7 @@ void setup() {
         "Configuración incompleta: configure ecg_config.h y vuelva a cargar el firmware.";
   }
 
-  configurarRutas();
+  Serial.println("Inicializando tarea de adquisición...");
   const BaseType_t tareaCreada = xTaskCreatePinnedToCore(
       tareaAdquisicion,
       "adquisicion_ecg",
@@ -674,11 +786,44 @@ void setup() {
     Serial.println("Error: no se pudo iniciar la tarea de adquisición.");
     ultimoMensaje = "Error interno: no se pudo iniciar la tarea de adquisición.";
   }
-  Serial.println("Monitor ECG disponible en la dirección IP del ESP32.");
+  Serial.println("=== SETUP FINALIZADO ===");
 }
 
 void loop() {
-  server.handleClient();
+  const bool wifiConectado = WiFi.status() == WL_CONNECTED;
+  if (!wifiConectado) {
+    direccionIpMostrada = false;
+
+    if (reintentoWifiPendiente &&
+        millis() - inicioReintentoWifi >= TIMEOUT_CONEXION_WIFI_MS) {
+      Serial.print("Reintento Wi-Fi fallido. Estado: ");
+      Serial.println(static_cast<int>(WiFi.status()));
+      reintentoWifiPendiente = false;
+      ultimoIntentoWifi = millis();
+    }
+
+    if (configuracionWifiValida &&
+        !reintentoWifiPendiente &&
+        millis() - ultimoIntentoWifi >= INTERVALO_REINTENTO_WIFI_MS) {
+      ultimoIntentoWifi = millis();
+      inicioReintentoWifi = ultimoIntentoWifi;
+      reintentoWifiPendiente = true;
+      Serial.println("Reintentando conexión Wi-Fi...");
+      WiFi.begin(ECG_WIFI_SSID, ECG_WIFI_PASSWORD);
+    }
+  } else {
+    reintentoWifiPendiente = false;
+    if (!wifiEstabaConectado) {
+      Serial.println("Wi-Fi conectado correctamente.");
+    }
+    wifiEstabaConectado = true;
+    configurarRutas();
+  }
+
+  if (servidorHttpIniciado) {
+    server.handleClient();
+  }
+  actualizarServiciosMdns();
   if (WiFi.status() == WL_CONNECTED && !direccionIpMostrada) {
     Serial.print("Direccion IP del ESP32: ");
     Serial.println(WiFi.localIP());

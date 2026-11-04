@@ -85,9 +85,64 @@ class RespuestaGuardado(BaseModel):
     resultado_id: IdentificadorPositivo
 
 
+class DatosTecnicosEvaluacionECG(BaseModel):
+    frecuencia_muestreo_hz: int
+    cantidad_muestras: int
+    unidad: Literal["mV", "ADC"]
+
+
+class MetricasTecnicasSenalECG(BaseModel):
+    duracion_entre_muestras_segundos: float
+    amplitud_minima: float
+    amplitud_maxima: float
+    amplitud_rango: float
+    muestras_distintas: int
+    muestras_adc_en_riel_inferior: int | None = None
+    muestras_adc_en_riel_superior: int | None = None
+
+
+NivelEvaluacionPreventiva = Literal[
+    "VERDE", "AMARILLO", "ROJO", "NO_EVALUABLE"
+]
+ColorEvaluacionPreventiva = Literal["VERDE", "AMARILLO", "ROJO", "GRIS"]
+
+
+class EvaluacionPreventivaECG(BaseModel):
+    nivel: NivelEvaluacionPreventiva
+    color: ColorEvaluacionPreventiva
+    motivo: str = Field(min_length=1)
+    parametros_evaluados: list[str]
+    valores_medidos: dict[str, float]
+    criterios_activados: list[str]
+    parametros_no_evaluables: list[str]
+    calidad_senal: str = Field(min_length=1)
+    datos_tecnicos: DatosTecnicosEvaluacionECG
+    metricas_tecnicas: MetricasTecnicasSenalECG | None = None
+    advertencias_tecnicas: list[str]
+
+    @model_validator(mode="after")
+    def validar_estado_preventivo(self) -> Self:
+        colores_por_nivel = {
+            "VERDE": "VERDE",
+            "AMARILLO": "AMARILLO",
+            "ROJO": "ROJO",
+            "NO_EVALUABLE": "GRIS",
+        }
+        if self.color != colores_por_nivel[self.nivel]:
+            raise ValueError("el color no coincide con el nivel preventivo")
+        if self.nivel == "VERDE" and (
+            not self.parametros_evaluados or not self.valores_medidos
+        ):
+            raise ValueError(
+                "el nivel VERDE requiere parámetros evaluados y valores medidos"
+            )
+        return self
+
+
 class ResultadoECG(BaseModel):
     id: IdentificadorPositivo
     data: DatosECG
+    evaluacion_preventiva: EvaluacionPreventivaECG
 
 
 class RespuestaConsulta(BaseModel):

@@ -287,3 +287,5 @@ Crear/completar:
 ## 18. Estado clínico durante el desarrollo
 
 La señal y datos de simulación son ficticios. Una condición clínica solo puede incorporarse siguiendo `FICHA_TRAZABILIDAD_REGLA_CLINICA.md`.
+
+La pantalla puede presentar un estado preventivo **NO EVALUABLE** y sus limitaciones técnicas. Esto no interpreta la señal ni sustituye la aprobación clínica; no se asignan niveles clínicos VERDE, AMARILLO o ROJO a las capturas actuales.

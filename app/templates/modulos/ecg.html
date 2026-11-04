@@ -22,7 +22,22 @@
     .pad.yellow { border-color: #ca8a04; }
     .pad.green { border-color: #15803d; }
     .connection { border-left: 4px solid #64748b; padding: .6rem .8rem; margin: .5rem 0; }
+    .assessment { border: 2px solid #64748b; border-left-width: .6rem; padding: .8rem 1rem; background: #f1f5f9; }
+    .assessment-status { color: #334155; font-size: 1.15rem; font-weight: 800; }
+    .assessment-states { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .65rem; padding: 0; list-style: none; }
+    .assessment-state { display: flex; align-items: flex-start; gap: .6rem; min-height: 4.5rem; border: 2px solid #94a3b8; border-radius: .6rem; padding: .7rem; }
+    .assessment-state[aria-current="true"] { border-width: 3px; box-shadow: 0 0 0 2px #1e293b; }
+    .assessment-indicator { flex: 0 0 1rem; width: 1rem; height: 1rem; margin-top: .15rem; border: 2px solid currentColor; border-radius: 50%; background: currentColor; }
+    .assessment-state[data-color="VERDE"] { color: #166534; background: #f0fdf4; }
+    .assessment-state[data-color="AMARILLO"] { color: #854d0e; background: #fefce8; }
+    .assessment-state[data-color="ROJO"] { color: #991b1b; background: #fef2f2; }
+    .assessment-state[data-color="GRIS"] { color: #475569; background: #f1f5f9; }
+    .assessment-state strong, .assessment-state span:last-child { display: block; }
+    .assessment[data-color="verde"] { border-color: #166534; background: #f0fdf4; }
+    .assessment[data-color="amarillo"] { border-color: #854d0e; background: #fefce8; }
+    .assessment[data-color="rojo"] { border-color: #991b1b; background: #fef2f2; }
     .signal { display: block; width: 100%; max-width: 100%; height: auto; aspect-ratio: 640 / 210; border: 1px solid #94a3b8; background: #f8fafc; }
+    .signal-scale-status { min-height: 1.5em; }
     button { margin: .5rem .5rem .5rem 0; padding: .65rem 1rem; cursor: pointer; }
     button:disabled { cursor: not-allowed; opacity: .55; }
     label { display: block; margin: .8rem 0; }
@@ -34,6 +49,21 @@
   <main id="ecg-app" data-step="0">
     <h1>Recorrido educativo de captura ECG</h1>
     <p id="modo-actual"><strong>Adquisición física ESP32 + AD8232.</strong></p>
+    <section class="notice" aria-labelledby="alcance-clinico-titulo">
+      <h2 id="alcance-clinico-titulo">Alcance, errores técnicos y limitaciones clínicas</h2>
+      <p>Con la señal disponible, la evaluación preventiva se informa como <strong>NO EVALUABLE</strong>. No se emiten diagnósticos ni se descartan enfermedades. Una advertencia técnica de adquisición no equivale a una alerta clínica.</p>
+      <h3>Posibles errores técnicos</h3>
+      <ul>
+        <li>Ruido eléctrico e interferencias.</li>
+        <li>Movimiento de la persona y contacto deficiente o desconexión de electrodos.</li>
+        <li>Variaciones en la línea de base.</li>
+        <li>Frecuencia de muestreo y resolución del conversor ADC.</li>
+        <li>Detección incorrecta de ondas P, QRS o T y errores en la estimación de intervalos.</li>
+      </ul>
+      <h3>Limitaciones de una sola derivación</h3>
+      <p>El sistema utiliza una sola señal del AD8232 y no equivale a un ECG convencional de 12 derivaciones. No permite evaluar adecuadamente todas las regiones eléctricas del corazón ni determinar de manera confiable el eje eléctrico frontal; puede no detectar alteraciones visibles en otras derivaciones. La interpretación de ST y T está limitada por la perspectiva de esta derivación.</p>
+      <p><strong>No utilizar para descartar enfermedades ni emitir diagnósticos.</strong> Esta herramienta es educativa y preventiva, no está clínicamente validada.</p>
+    </section>
     <section aria-labelledby="contexto-integracion-titulo">
       <h2 id="contexto-integracion-titulo">Contexto del episodio pendiente</h2>
       <p id="episodio-contexto">No se recibió un episodio activo. La adquisición física requiere un episodio real.</p>
@@ -71,9 +101,8 @@
       <section id="sensor-panel" aria-labelledby="sensor-titulo">
         <h3 id="sensor-titulo">Adquisición física</h3>
         <p>El ESP32 adquiere 250 Hz durante 10 s (2500 muestras crudas ADC) y envía la captura completa a la API.</p>
-        <label for="esp32-url">Dirección del ESP32</label>
-        <input id="esp32-url" type="url" inputmode="url" autocomplete="url" placeholder="http://192.168.1.50" required>
-        <p id="estado-dispositivo" role="status">Conexión no verificada: todavía no se recibió una captura nueva.</p>
+        <p id="estado-dispositivo" role="status" aria-live="polite">Conexión: DESCONECTADO.</p>
+        <p id="estado-captura" role="status">Sin captura nueva confirmada en esta sesión.</p>
         <p id="estado-fisico" role="status" aria-live="polite">Listo para iniciar.</p>
         <button id="iniciar-ecg" type="button" disabled>Iniciar ECG</button>
         <label for="capturas-historicas">Capturas físicas guardadas para este episodio</label>
@@ -82,19 +111,35 @@
         </select>
         <p>Las capturas completas se guardan obligatoriamente en la API; los registros anteriores se conservan. La identificación experimental de ondas P, complejo QRS, onda T, PR o ST no está implementada.</p>
       </section>
+      <p id="estado-escala-vertical" class="signal-scale-status" role="status" aria-live="polite">Esperando muestras ADC crudas.</p>
+      <p id="estado-integridad-senal" role="status" aria-live="polite">El gráfico mostrará interrupciones de comunicación como segmentos separados; no se informan pérdidas internas de adquisición.</p>
+      <p>La cuadrícula muestra subdivisiones temporales orientativas (0,2 s y 1 s); no representa papel ECG calibrado ni una escala de 10 mm/mV. El trazo conserva ADC crudo, sin conversión a mV ni suavizado.</p>
       <svg id="grafico-senal" class="signal" viewBox="0 0 640 210" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="grafico-titulo grafico-descripcion">
         <title id="grafico-titulo">Señal ECG</title>
-        <desc id="grafico-descripcion">La gráfica muestra únicamente las muestras recibidas, sin interpretación clínica.</desc>
-        <path d="M 72 20 H 620 M 72 90 H 620 M 72 160 H 620" stroke="#cbd5e1" stroke-width="1" fill="none"></path>
-        <path d="M 72 20 V 160 M 346 20 V 160 M 620 20 V 160" stroke="#e2e8f0" stroke-width="1" fill="none"></path>
-        <text id="amplitud-maxima" x="68" y="16" text-anchor="end" font-size="10">—</text>
+        <desc id="grafico-descripcion">Ventana de 10 segundos con muestras ADC crudas. La cuadrícula no es una escala clínica calibrada.</desc>
+        <defs>
+          <pattern id="ecg-subdivisiones" width="10.96" height="7" patternUnits="userSpaceOnUse">
+            <path d="M 10.96 0 H 0 V 7" fill="none" stroke="#f3c7cc" stroke-width=".45"></path>
+          </pattern>
+          <pattern id="ecg-divisiones-principales" width="54.8" height="35" patternUnits="userSpaceOnUse">
+            <path d="M 54.8 0 H 0 V 35" fill="none" stroke="#d98f99" stroke-width=".8"></path>
+          </pattern>
+          <clipPath id="recorte-senal">
+            <rect x="72" y="20" width="548" height="140"></rect>
+          </clipPath>
+        </defs>
+        <rect x="72" y="20" width="548" height="140" fill="url(#ecg-subdivisiones)"></rect>
+        <rect x="72" y="20" width="548" height="140" fill="url(#ecg-divisiones-principales)"></rect>
+        <text id="amplitud-maxima" x="68" y="16" text-anchor="end" font-size="10">+</text>
         <text id="amplitud-centro-escala" x="68" y="94" text-anchor="end" font-size="10">—</text>
-        <text id="amplitud-minima" x="68" y="164" text-anchor="end" font-size="10">—</text>
+        <text id="amplitud-minima" x="68" y="164" text-anchor="end" font-size="10">−</text>
         <text x="72" y="180" font-size="10">0 s</text>
-        <text id="tiempo-medio" x="346" y="180" text-anchor="middle" font-size="10">— s</text>
-        <text id="tiempo-total" x="620" y="180" text-anchor="end" font-size="10">— s</text>
-        <text id="unidad-eje" x="72" y="198" font-size="11">Amplitud —</text>
-        <polyline id="trazo-senal" points="" fill="none" stroke="#1d4ed8" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"></polyline>
+        <text id="tiempo-medio" x="346" y="180" text-anchor="middle" font-size="10">5 s</text>
+        <text id="tiempo-total" x="620" y="180" text-anchor="end" font-size="10">10 s</text>
+        <text id="unidad-eje" x="72" y="198" font-size="11">Desviación visual centrada (sin unidad calibrada)</text>
+        <g id="trazo-grupo" transform="translate(620 0)" clip-path="url(#recorte-senal)">
+          <path id="trazo-senal" d="" fill="none" stroke="#1d4ed8" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="butt"></path>
+        </g>
       </svg>
     </section>
 
@@ -107,6 +152,41 @@
         <div><dt>Frecuencia de muestreo</dt><dd id="frecuencia-final">—</dd></div>
         <div><dt>Unidad</dt><dd id="unidad-final">—</dd></div>
       </dl>
+      <section id="evaluacion-preventiva" class="assessment" data-color="gris" aria-labelledby="evaluacion-preventiva-titulo">
+        <h3 id="evaluacion-preventiva-titulo">Clasificación preventiva</h3>
+        <ul id="evaluacion-estados" class="assessment-states" aria-label="Estados posibles del semáforo preventivo">
+          <li id="estado-verde" class="assessment-state" data-nivel="VERDE" data-color="VERDE">
+            <span class="assessment-indicator" aria-hidden="true"></span>
+            <span><strong>VERDE</strong><span>Sin alertas dentro de los parámetros evaluables.</span></span>
+          </li>
+          <li id="estado-amarillo" class="assessment-state" data-nivel="AMARILLO" data-color="AMARILLO">
+            <span class="assessment-indicator" aria-hidden="true"></span>
+            <span><strong>AMARILLO</strong><span>Hallazgos que requieren revisión.</span></span>
+          </li>
+          <li id="estado-rojo" class="assessment-state" data-nivel="ROJO" data-color="ROJO">
+            <span class="assessment-indicator" aria-hidden="true"></span>
+            <span><strong>ROJO</strong><span>Hallazgos que requieren evaluación profesional prioritaria.</span></span>
+          </li>
+          <li id="estado-gris" class="assessment-state" data-nivel="NO_EVALUABLE" data-color="GRIS">
+            <span class="assessment-indicator" aria-hidden="true"></span>
+            <span><strong>GRIS · NO EVALUABLE</strong><span>No se puede clasificar con los datos disponibles.</span></span>
+          </li>
+        </ul>
+        <p id="evaluacion-nivel" class="assessment-status" role="status" aria-live="polite">Sin resultado de evaluación consultado.</p>
+        <p id="evaluacion-motivo">El estado se mostrará cuando la API devuelva la evaluación preventiva del episodio.</p>
+        <p><strong>Calidad de señal:</strong> <span id="evaluacion-calidad">NO EVALUADA</span></p>
+        <p><strong>Datos técnicos recibidos:</strong> <span id="evaluacion-datos-tecnicos">Pendientes de captura.</span></p>
+        <p><strong>Parámetros evaluados:</strong></p>
+        <ul id="evaluacion-parametros-evaluados"><li>Ninguno.</li></ul>
+        <p><strong>Valores medidos:</strong></p>
+        <ul id="evaluacion-valores-medidos"><li>No hay mediciones clínicas confiables.</li></ul>
+        <p><strong>Criterios activados:</strong></p>
+        <ul id="evaluacion-criterios"><li>No se evaluaron criterios clínicos; esto no significa normalidad.</li></ul>
+        <p><strong>Parámetros no evaluables:</strong></p>
+        <ul id="evaluacion-parametros-pendientes"><li>Pendiente de evaluar.</li></ul>
+        <p><strong>Advertencias técnicas:</strong></p>
+        <ul id="evaluacion-advertencias"><li>Pendientes de evaluación.</li></ul>
+      </section>
       <section id="persistencia-panel" aria-labelledby="persistencia-titulo">
         <h3 id="persistencia-titulo">Estado del resultado</h3>
         <p id="episodio-persistencia">Sin episodio validado. Abrí esta pantalla desde un episodio real para iniciar la adquisición.</p>
