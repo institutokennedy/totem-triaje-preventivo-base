@@ -3,6 +3,13 @@
 #include <ESPmDNS.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_adc/adc_cali.h>
+#include <esp_adc/adc_cali_scheme.h>
+#include <esp_chip_info.h>
+#include <esp_efuse.h>
+#include <esp_efuse_table.h>
+#include <esp_err.h>
+#include <esp_idf_version.h>
 #include <esp_system.h>
 #include <math.h>
 #include <stdlib.h>
@@ -28,18 +35,38 @@ constexpr unsigned long TIMEOUT_HTTP_MS = 8000;
 constexpr unsigned long TIMEOUT_CONEXION_WIFI_MS = 15000;
 constexpr unsigned long INTERVALO_REINTENTO_WIFI_MS = 15000;
 constexpr unsigned long INTERVALO_REINTENTO_MDNS_MS = 5000;
+constexpr uint32_t ADC_VREF_EFUSE_RAW_VERIFICADO = 17;
+constexpr uint32_t ADC_VREF_EFUSE_MV_VERIFICADO = 1093;
 
 WebServer server(80);
 portMUX_TYPE capturaMux = portMUX_INITIALIZER_UNLOCKED;
 uint16_t muestras[MUESTRAS_POR_CAPTURA] = {};
 uint16_t muestrasCopia[MUESTRAS_POR_CAPTURA] = {};
+int muestrasMvOut[MUESTRAS_POR_CAPTURA] = {};
+int muestrasMvOutCopia[MUESTRAS_POR_CAPTURA] = {};
+adc_cali_handle_t calibradorAdc = nullptr;
 volatile size_t cantidadMuestras = 0;
+volatile size_t cantidadMuestrasMvOut = 0;
 volatile bool adquisicionEnCurso = false;
 volatile bool capturaLista = false;
 volatile bool capturaAbortada = false;
 volatile bool electrodosConectados = false;
+volatile bool calibracionAdcDisponible = false;
+volatile bool calibracionCapturaValida = false;
+volatile int calibracionAdcErrorCodigo = ESP_ERR_INVALID_STATE;
 volatile uint16_t ultimaMuestraADC = 0;
 volatile int bpmEstimadoExperimental = 0;
+adc_cali_line_fitting_efuse_val_t fuenteCalibracionAdc =
+    ADC_CALI_LINE_FITTING_EFUSE_VAL_DEFAULT_VREF;
+uint32_t adcVrefEfuseRaw = 0;
+uint32_t adcVrefEfuseMv = 0;
+const char* calibracionAdcError = "Calibrador ADC no inicializado.";
+
+struct EstadoCalibracionAdcSnapshot {
+  bool disponible;
+  int codigoError;
+  const char* detalleError;
+};
 
 int episodioId = 0;
 int dispositivoId = 0;
@@ -245,6 +272,123 @@ String escaparJson(const String& valor) {
   return salida;
 }
 
+void marcarErrorCalibracionAdc(esp_err_t error, const char* detalle) {
+  portENTER_CRITICAL(&capturaMux);
+  calibracionAdcDisponible = false;
+  calibracionCapturaValida = false;
+  calibracionAdcErrorCodigo = error;
+  calibracionAdcError = detalle;
+  portEXIT_CRITICAL(&capturaMux);
+  Serial.printf(
+      "Error de calibración ADC: %s (%d): %s\n",
+      esp_err_to_name(error),
+      static_cast<int>(error),
+      detalle);
+}
+
+void inicializarCalibracionAdc() {
+  adc_cali_line_fitting_efuse_val_t fuente =
+      ADC_CALI_LINE_FITTING_EFUSE_VAL_DEFAULT_VREF;
+  esp_err_t resultado = adc_cali_scheme_line_fitting_check_efuse(&fuente);
+  if (resultado != ESP_OK) {
+    marcarErrorCalibracionAdc(
+        resultado,
+        "No se pudo detectar el esquema de calibración ADC eFuse.");
+    return;
+  }
+
+  fuenteCalibracionAdc = fuente;
+  if (fuente != ADC_CALI_LINE_FITTING_EFUSE_VAL_EFUSE_VREF) {
+    marcarErrorCalibracionAdc(
+        ESP_ERR_NOT_SUPPORTED,
+        "La fuente eFuse detectada no es ADC_VREF verificada.");
+    return;
+  }
+
+  resultado = esp_efuse_read_field_blob(
+      ESP_EFUSE_ADC_VREF,
+      &adcVrefEfuseRaw,
+      5);
+  if (resultado != ESP_OK) {
+    marcarErrorCalibracionAdc(
+        resultado,
+        "No se pudo leer el campo ADC_VREF eFuse.");
+    return;
+  }
+  if (adcVrefEfuseRaw != ADC_VREF_EFUSE_RAW_VERIFICADO) {
+    marcarErrorCalibracionAdc(
+        ESP_ERR_INVALID_STATE,
+        "El valor ADC_VREF eFuse no coincide con el verificado (1093 mV).");
+    return;
+  }
+  adcVrefEfuseMv = ADC_VREF_EFUSE_MV_VERIFICADO;
+
+  const adc_cali_line_fitting_config_t configuracion = {
+      .unit_id = ADC_UNIT_1,
+      .atten = ADC_ATTEN_DB_12,
+      .bitwidth = ADC_BITWIDTH_12,
+      .default_vref = 0,
+  };
+  resultado = adc_cali_create_scheme_line_fitting(
+      &configuracion,
+      &calibradorAdc);
+  if (resultado != ESP_OK) {
+    marcarErrorCalibracionAdc(
+        resultado,
+        "No se pudo crear el calibrador ADC line-fitting.");
+    return;
+  }
+
+  portENTER_CRITICAL(&capturaMux);
+  calibracionAdcErrorCodigo = ESP_OK;
+  calibracionAdcError = "";
+  calibracionAdcDisponible = true;
+  portEXIT_CRITICAL(&capturaMux);
+  Serial.printf(
+      "Calibrador ADC listo: ADC1 GPIO34, 12 bits, ADC_11db/ADC_ATTEN_DB_12, "
+      "eFuse Vref=%u mV.\n",
+      static_cast<unsigned int>(adcVrefEfuseMv));
+}
+
+String metadatosCalibracionAdcJson(
+    const EstadoCalibracionAdcSnapshot& estado) {
+  esp_chip_info_t chip = {};
+  esp_chip_info(&chip);
+  String json = "{\"estado\":\"";
+  json += estado.disponible ? "CALIBRADA" : "ERROR";
+  json += "\",\"metodo\":\"ESP_IDF_LINE_FITTING\",\"fuente\":\"";
+  if (fuenteCalibracionAdc ==
+      ADC_CALI_LINE_FITTING_EFUSE_VAL_EFUSE_VREF) {
+    json += "EFUSE_VREF";
+  } else if (fuenteCalibracionAdc ==
+             ADC_CALI_LINE_FITTING_EFUSE_VAL_EFUSE_TP) {
+    json += "EFUSE_TWO_POINT";
+  } else {
+    json += "NO_DISPONIBLE";
+  }
+  json += "\",\"vref_efuse_raw\":";
+  json += String(adcVrefEfuseRaw);
+  json += ",\"vref_efuse_mv\":";
+  json += adcVrefEfuseMv > 0 ? String(adcVrefEfuseMv) : String("null");
+  json += ",\"adc_unit\":\"ADC1\",\"gpio\":34,\"canal\":6,"
+          "\"resolucion_bits\":12,"
+          "\"atenuacion\":\"ADC_11db/ADC_ATTEN_DB_12\","
+          "\"chip_model\":\"";
+  json += escaparJson(String(ESP.getChipModel()));
+  json += "\",\"chip_revision\":";
+  json += String(chip.revision);
+  json += ",\"esp_idf_version\":\"";
+  json += escaparJson(String(esp_get_idf_version()));
+  json += "\",\"error_codigo\":";
+  json += estado.disponible ? String("null") : String(estado.codigoError);
+  json += ",\"error\":\"";
+  json += estado.disponible
+              ? String("")
+              : escaparJson(String(estado.detalleError));
+  json += "\"}";
+  return json;
+}
+
 void aplicarCabecerasCors() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -376,8 +520,10 @@ void iniciarAdquisicion() {
   adquisicionId = nuevoId;
   portENTER_CRITICAL(&capturaMux);
   cantidadMuestras = 0;
+  cantidadMuestrasMvOut = 0;
   capturaAbortada = false;
   capturaLista = false;
+  calibracionCapturaValida = calibracionAdcDisponible;
   adquisicionEnCurso = true;
   portEXIT_CRITICAL(&capturaMux);
 
@@ -443,11 +589,30 @@ void tareaAdquisicion(void*) {
     }
 
     const uint16_t muestra = static_cast<uint16_t>(analogRead(ECG_PIN));
+    int muestraMvOut = 0;
+    esp_err_t resultadoConversion = ESP_ERR_INVALID_STATE;
+    if (calibradorAdc != nullptr && calibracionAdcDisponible) {
+      resultadoConversion = adc_cali_raw_to_voltage(
+          calibradorAdc,
+          static_cast<int>(muestra),
+          &muestraMvOut);
+      if (resultadoConversion != ESP_OK) {
+        marcarErrorCalibracionAdc(
+            resultadoConversion,
+            "Falló la conversión de una muestra ADC a mV_OUT.");
+      }
+    }
     actualizarEstimacionExperimental(muestra);
     portENTER_CRITICAL(&capturaMux);
     ultimaMuestraADC = muestra;
     if (adquisicionEnCurso && cantidadMuestras < MUESTRAS_POR_CAPTURA) {
-      muestras[cantidadMuestras++] = muestra;
+      const size_t indice = cantidadMuestras;
+      muestras[indice] = muestra;
+      cantidadMuestras = cantidadMuestras + 1;
+      if (calibracionCapturaValida && resultadoConversion == ESP_OK) {
+        muestrasMvOut[indice] = muestraMvOut;
+        cantidadMuestrasMvOut = cantidadMuestrasMvOut + 1;
+      }
       if (cantidadMuestras == MUESTRAS_POR_CAPTURA) {
         adquisicionEnCurso = false;
         capturaLista = true;
@@ -470,11 +635,22 @@ bool enviarCaptura() {
   }
 
   size_t cantidad = 0;
+  size_t cantidadMvOut = 0;
   int episodio = 0;
+  bool calibracionValida = false;
+  EstadoCalibracionAdcSnapshot estadoCalibracion = {};
   portENTER_CRITICAL(&capturaMux);
   cantidad = cantidadMuestras;
+  cantidadMvOut = cantidadMuestrasMvOut;
+  calibracionValida = calibracionCapturaValida;
+  estadoCalibracion.disponible = calibracionAdcDisponible;
+  estadoCalibracion.codigoError = calibracionAdcErrorCodigo;
+  estadoCalibracion.detalleError = calibracionAdcError;
   if (cantidad == MUESTRAS_POR_CAPTURA && capturaLista) {
     memcpy(muestrasCopia, muestras, sizeof(muestrasCopia));
+    if (calibracionValida && cantidadMvOut == cantidad) {
+      memcpy(muestrasMvOutCopia, muestrasMvOut, sizeof(muestrasMvOutCopia));
+    }
   }
   portEXIT_CRITICAL(&capturaMux);
   episodio = episodioId;
@@ -487,7 +663,7 @@ bool enviarCaptura() {
   }
 
   String payload;
-  payload.reserve(32000);
+  payload.reserve(60000);
   payload = "{\"episodio_id\":";
   payload += String(episodio);
   payload += ",\"dispositivo_id\":";
@@ -500,7 +676,22 @@ bool enviarCaptura() {
     }
     payload += String(muestrasCopia[indice]);
   }
-  payload += "],\"unidad\":\"ADC\",\"adquisicion_id\":\"";
+  payload += "],\"unidad\":\"ADC\",\"calibracion_adc\":";
+  payload += metadatosCalibracionAdcJson(estadoCalibracion);
+  if (calibracionValida && cantidadMvOut == cantidad) {
+    payload += ",\"muestras_mV_OUT\":[";
+    for (size_t indice = 0; indice < cantidadMvOut; ++indice) {
+      if (indice > 0) {
+        payload += ',';
+      }
+      payload += String(muestrasMvOutCopia[indice]);
+    }
+    payload += "]";
+    payload += ",\"estado_mV_OUT\":\"NO_CONFIABLE\"";
+  } else {
+    payload += ",\"estado_mV_OUT\":\"NO_EVALUABLE\"";
+  }
+  payload += ",\"adquisicion_id\":\"";
   payload += id;
   payload += "\"}}";
 
@@ -544,6 +735,9 @@ void apiECG() {
   bool pendiente = false;
   bool abortada = false;
   bool electrodos = false;
+  bool calibracionValida = false;
+  EstadoCalibracionAdcSnapshot estadoCalibracion = {};
+  size_t cantidadMvOut = 0;
   uint16_t ultimaMuestra = 0;
   String id = adquisicionId;
   int bpm = 0;
@@ -554,10 +748,18 @@ void apiECG() {
   pendiente = capturaLista;
   abortada = capturaAbortada;
   electrodos = electrodosConectados;
+  calibracionValida = calibracionCapturaValida;
+  cantidadMvOut = cantidadMuestrasMvOut;
+  estadoCalibracion.disponible = calibracionAdcDisponible;
+  estadoCalibracion.codigoError = calibracionAdcErrorCodigo;
+  estadoCalibracion.detalleError = calibracionAdcError;
   ultimaMuestra = ultimaMuestraADC;
   bpm = bpmEstimadoExperimental;
   if (cantidad > 0) {
     memcpy(muestrasCopia, muestras, cantidad * sizeof(uint16_t));
+    if (calibracionValida && cantidadMvOut == cantidad) {
+      memcpy(muestrasMvOutCopia, muestrasMvOut, cantidad * sizeof(int));
+    }
   }
   portEXIT_CRITICAL(&capturaMux);
   if (abortada) {
@@ -587,7 +789,7 @@ void apiECG() {
   }
 
   String json;
-  json.reserve(120 + cantidad * 6);
+  json.reserve(256 + cantidad * 14);
   json = "{\"ecg\":";
   json += String(ultimaMuestra);
   json += ",\"bpm\":";
@@ -623,7 +825,22 @@ void apiECG() {
     }
     json += String(muestrasCopia[indice]);
   }
-  json += "],\"codigo_http\":";
+  json += "],\"calibracion_adc\":";
+  json += metadatosCalibracionAdcJson(estadoCalibracion);
+  if (calibracionValida && cantidadMvOut == cantidad) {
+    json += ",\"muestras_mV_OUT\":[";
+    for (size_t indice = 0; indice < cantidadMvOut; ++indice) {
+      if (indice > 0) {
+        json += ',';
+      }
+      json += String(muestrasMvOutCopia[indice]);
+    }
+    json += "]";
+    json += ",\"estado_mV_OUT\":\"NO_CONFIABLE\"";
+  } else {
+    json += ",\"estado_mV_OUT\":\"NO_EVALUABLE\"";
+  }
+  json += ",\"codigo_http\":";
   json += String(ultimoCodigoHttp);
   json += ",\"mensaje\":\"";
   json += escaparJson(mensaje);
@@ -732,6 +949,7 @@ void setup() {
   pinMode(LO_MINUS_PIN, INPUT);
   analogReadResolution(12);
   analogSetPinAttenuation(ECG_PIN, ADC_11db);
+  inicializarCalibracionAdc();
 
   Serial.println("Configurando Wi-Fi...");
   configuracionWifiValida =

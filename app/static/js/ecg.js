@@ -238,6 +238,11 @@
       !state.muestras.every((sample) =>
         Number.isInteger(sample) && sample >= 0 && sample <= 4095
       ) ||
+      !calibracionADCValida(
+        state,
+        state.cantidad_muestras,
+        true
+      ) ||
       state.frecuencia_muestreo_hz !== 250 ||
       state.unidad !== "ADC" ||
       typeof state.wifi_conectado !== "boolean" ||
@@ -342,7 +347,89 @@
       Array.isArray(data.muestras) && data.muestras.length === MUESTRAS_CAPTURA &&
       data.muestras.every((sample) =>
         Number.isInteger(sample) && sample >= 0 && sample <= 4095
+      ) &&
+      calibracionADCValida(data, data.muestras.length, false);
+  }
+
+  function calibracionADCValida(data, cantidad, permitirListaVacia) {
+    const calibration = data?.calibracion_adc;
+    const tieneMuestrasMv = Array.isArray(data?.muestras_mV_OUT);
+    if (calibration === undefined) {
+      return (
+        !Object.prototype.hasOwnProperty.call(data ?? {}, "muestras_mV_OUT") &&
+        (data?.estado_mV_OUT === undefined ||
+          data.estado_mV_OUT === "NO_EVALUABLE")
       );
+    }
+    if (
+      typeof calibration !== "object" ||
+      calibration.metodo !== "ESP_IDF_LINE_FITTING" ||
+      calibration.adc_unit !== "ADC1" ||
+      calibration.gpio !== 34 ||
+      calibration.canal !== 6 ||
+      calibration.resolucion_bits !== 12 ||
+      calibration.atenuacion !== "ADC_11db/ADC_ATTEN_DB_12" ||
+      typeof calibration.chip_model !== "string" ||
+      calibration.chip_model.length === 0 ||
+      !Number.isInteger(calibration.chip_revision) ||
+      typeof calibration.esp_idf_version !== "string" ||
+      calibration.esp_idf_version.length === 0
+    ) {
+      return false;
+    }
+    if (calibration.estado === "ERROR") {
+      return (
+        Number.isInteger(calibration.error_codigo) &&
+        calibration.error_codigo !== 0 &&
+        typeof calibration.error === "string" &&
+        calibration.error.trim().length > 0 &&
+        !tieneMuestrasMv &&
+        data.estado_mV_OUT === "NO_EVALUABLE"
+      );
+    }
+    if (calibration.estado === "NO_CONFIABLE") {
+      if (!tieneMuestrasMv) {
+        return (
+          data.estado_mV_OUT === "NO_EVALUABLE" &&
+          (calibration.error_codigo === null ||
+            calibration.error_codigo === undefined) &&
+          typeof calibration.error === "string" &&
+          calibration.error.trim().length > 0
+        );
+      }
+      return (
+        data.estado_mV_OUT === "NO_CONFIABLE" &&
+        typeof calibration.error === "string" &&
+        calibration.error.trim().length > 0 &&
+        (calibration.error_codigo === null ||
+          calibration.error_codigo === undefined) &&
+        tieneMuestrasMv &&
+        data.muestras_mV_OUT.length === cantidad &&
+        data.muestras_mV_OUT.every((sample) =>
+          Number.isInteger(sample) && sample >= 0
+        )
+      );
+    }
+    const metadatosCalibracionCoherentes =
+      calibration.estado === "CALIBRADA" &&
+      calibration.fuente === "EFUSE_VREF" &&
+      calibration.vref_efuse_raw === 17 &&
+      calibration.vref_efuse_mv === 1093 &&
+      calibration.chip_model === "ESP32-D0WD-V3" &&
+      calibration.chip_revision === 301 &&
+      calibration.esp_idf_version === "v5.5.5" &&
+      (calibration.error_codigo === null || calibration.error_codigo === undefined) &&
+      (calibration.error === null || calibration.error === "");
+    if (!metadatosCalibracionCoherentes) return false;
+    if (!tieneMuestrasMv) return data.estado_mV_OUT === "NO_EVALUABLE";
+    return (
+      data.estado_mV_OUT === "NO_CONFIABLE" &&
+      data.muestras_mV_OUT.length === cantidad &&
+      (permitirListaVacia || cantidad > 0) &&
+      data.muestras_mV_OUT.every((sample) =>
+        Number.isInteger(sample) && sample >= 0
+      )
+    );
   }
 
   function actualizarListaCapturasFisicas() {
@@ -394,7 +481,8 @@
     let changed = false;
     if (
       buffer.acquisitionId !== state.adquisicion_id ||
-      state.cantidad_muestras < buffer.lastCount
+      state.cantidad_muestras < buffer.lastCount ||
+      buffer.unit !== state.unidad
     ) {
       resetLiveSignalBuffer(buffer, state.adquisicion_id);
       changed = true;
@@ -453,22 +541,40 @@
     );
   }
 
-  function updateSignalScaleStatus(samples, baseline) {
+  function updateSignalScaleStatus(samples, baseline, unit = "ADC") {
     let lowerRail = 0;
     let upperRail = 0;
+    let minimum = samples.length > 0 ? samples[0] : 0;
+    let maximum = minimum;
     for (const sample of samples) {
-      if (sample === 0) lowerRail += 1;
-      if (sample === 4095) upperRail += 1;
+      minimum = Math.min(minimum, sample);
+      maximum = Math.max(maximum, sample);
+      if (unit === "ADC" && sample === 0) lowerRail += 1;
+      if (unit === "ADC" && sample === 4095) upperRail += 1;
     }
-    app.querySelector("#amplitud-maxima").textContent = "+";
-    app.querySelector("#amplitud-centro-escala").textContent = "0";
-    app.querySelector("#amplitud-minima").textContent = "−";
-    app.querySelector("#unidad-eje").textContent =
-      "Desviación visual centrada (sin unidad calibrada)";
-    app.querySelector("#estado-escala-vertical").textContent =
-      `Muestras originales: ${samples.length}; línea base visual ADC: ${baseline}; ` +
-      `amplitud autoajustada solo para mostrar. Fuente ADC cruda; no convertida a mV. ` +
-      `Muestras en rieles 0/4095: ${lowerRail}/${upperRail}.`;
+    const amplitude = samples.length > 0
+      ? Math.max(Math.abs(maximum - baseline), Math.abs(minimum - baseline))
+      : 0;
+    app.querySelector("#amplitud-maxima").textContent =
+      samples.length > 0 ? (baseline + amplitude).toFixed(0) : "—";
+    app.querySelector("#amplitud-centro-escala").textContent =
+      samples.length > 0 ? baseline.toFixed(1) : "—";
+    app.querySelector("#amplitud-minima").textContent =
+      samples.length > 0 ? (baseline - amplitude).toFixed(0) : "—";
+    if (unit === "mV_OUT") {
+      app.querySelector("#unidad-eje").textContent =
+        "mV_OUT (tensión calibrada a la salida del AD8232; autoescala)";
+      app.querySelector("#estado-escala-vertical").textContent =
+        `mV_OUT calibrados del ESP32: ${samples.length} muestras; línea base visual ${baseline.toFixed(1)} mV. ` +
+        "No representa mV_ECG ni confirma exactitud metrológica; los ADC originales se conservan.";
+    } else {
+      app.querySelector("#unidad-eje").textContent =
+        "ADC (cuentas; autoescala visual, no mV)";
+      app.querySelector("#estado-escala-vertical").textContent =
+        `Muestras originales: ${samples.length}; línea base visual ADC: ${baseline}; ` +
+        `escala autoajustada solo para mostrar. No se dispone de mV_OUT calibrados. ` +
+        `Muestras en rieles 0/4095: ${lowerRail}/${upperRail}.`;
+    }
   }
 
   function updateSignalContinuityStatus(buffer) {
@@ -516,7 +622,7 @@
       "transform",
       `translate(${liveSignalOffset(liveSignalBuffer, now).toFixed(2)} 0)`
     );
-    updateSignalScaleStatus(samples, scale.baseline);
+    updateSignalScaleStatus(samples, scale.baseline, liveSignalBuffer.unit);
     updateSignalContinuityStatus(liveSignalBuffer);
   }
 
@@ -542,7 +648,7 @@
     if (liveSignalBuffer.size > 0) updateLiveSignalTrace(performance.now());
   }
 
-  function drawSignal(samples) {
+  function drawSignal(samples, unit = "ADC") {
     const trace = app.querySelector("#trazo-senal");
     if (samples.length === 0) {
       trace.setAttribute("d", "");
@@ -550,7 +656,7 @@
         "transform",
         `translate(${GRAFICA_X_FIN} 0)`
       );
-      updateSignalScaleStatus([], 0);
+      updateSignalScaleStatus([], 0, unit);
       return;
     }
 
@@ -568,7 +674,7 @@
       "transform",
       `translate(${GRAFICA_X_INICIO} 0)`
     );
-    updateSignalScaleStatus(visibleSamples, scale.baseline);
+    updateSignalScaleStatus(visibleSamples, scale.baseline, unit);
     app.querySelector("#estado-integridad-senal").textContent =
       "Captura guardada: no se agregaron muestras ni se interpolaron segmentos.";
     app.querySelector("#tiempo-medio").textContent = "5 s";
@@ -599,7 +705,41 @@
     }));
   }
 
+  function renderRuleAssessments(rules) {
+    const list = app.querySelector("#evaluacion-reglas");
+    const validRules = Array.isArray(rules)
+      ? rules.filter((rule) =>
+        typeof rule?.identificador === "string" &&
+        ["CUMPLE", "NO_CUMPLE", "NO_EVALUABLE"].includes(rule.estado) &&
+        typeof rule.motivo === "string" &&
+        rule.motivo.trim().length > 0
+      )
+      : [];
+    const entries = validRules.length > 0
+      ? validRules.map((rule) =>
+        `${rule.identificador} · ${rule.estado}: ${rule.motivo}`
+      )
+      : ["El backend no devolvió resultados individuales por regla."];
+    list.replaceChildren(...entries.map((value) => {
+      const item = document.createElement("li");
+      item.textContent = value;
+      return item;
+    }));
+  }
+
   function renderPreventiveAssessment(result) {
+    const identifiers = [
+      "RC-ECG-001",
+      "RC-ECG-002",
+      "RC-ECG-003",
+      "RC-ECG-004",
+      "RC-ECG-005",
+      "RC-ECG-006",
+      "RC-ECG-007",
+      "RC-ECG-008",
+      "RC-ECG-009",
+    ];
+    const qualityReady = "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA";
     const panel = app.querySelector("#evaluacion-preventiva");
     const assessment = result?.evaluacion_preventiva;
     const stateCards = app.querySelectorAll(".assessment-state");
@@ -620,6 +760,27 @@
     const hasMeasurementData = assessment?.valores_medidos &&
       typeof assessment.valores_medidos === "object" &&
       !Array.isArray(assessment.valores_medidos);
+    const reglasVerdesValidas = Array.isArray(assessment?.reglas) &&
+      assessment.reglas.length === identifiers.length &&
+      assessment.reglas.every((rule, index) =>
+        rule?.identificador === identifiers[index] &&
+        rule.estado === "CUMPLE" &&
+        typeof rule.motivo === "string" &&
+        rule.motivo.trim().length > 0
+      );
+    const calidadVerdeValida =
+      assessment?.calidad_senal === qualityReady &&
+      assessment?.parametros_evaluados?.length ===
+        identifiers.length &&
+      assessment.parametros_evaluados.every(
+        (ruleId, index) => ruleId === identifiers[index]
+      ) &&
+      assessment?.parametros_no_evaluables?.length === 0 &&
+      assessment?.criterios_activados?.length === 0 &&
+      assessment?.datos_tecnicos?.frecuencia_muestreo_hz >= 500 &&
+      (assessment.datos_tecnicos.cantidad_muestras - 1) /
+        assessment.datos_tecnicos.frecuencia_muestreo_hz >= 10 &&
+      assessment?.datos_tecnicos?.unidad === "mV";
     const hasCompleteAssessment =
       matchingCard !== undefined &&
       typeof assessment.motivo === "string" &&
@@ -635,7 +796,8 @@
       Number.isInteger(assessment.datos_tecnicos?.cantidad_muestras) &&
       ["mV", "ADC"].includes(assessment.datos_tecnicos?.unidad) &&
       (assessment.nivel !== "VERDE" ||
-        (assessment.parametros_evaluados.length > 0 &&
+        (reglasVerdesValidas &&
+          calidadVerdeValida &&
           Object.keys(assessment.valores_medidos).length > 0));
     const selectedCard = hasCompleteAssessment
       ? matchingCard
@@ -677,6 +839,7 @@
         [],
         "La evaluación clínica y la calidad de señal no están disponibles."
       );
+      renderRuleAssessments([]);
       return;
     }
 
@@ -724,6 +887,7 @@
       assessment.advertencias_tecnicas,
       "No se recibió una lista de advertencias técnicas."
     );
+    renderRuleAssessments(assessment.reglas);
   }
 
   function actualizarCapturaGuardada(result, isNewCapture = false) {
@@ -732,21 +896,30 @@
     }
     renderPreventiveAssessment(result);
     const data = result.data;
+    const muestrasGrafica = data.muestras;
+    const unidadGrafica = "ADC";
     capturaActual = {
       adquisicion_id: data.adquisicion_id,
       frecuencia_muestreo_hz: data.frecuencia_muestreo_hz,
       muestras: [...data.muestras],
       unidad: data.unidad,
+      muestras_mV_OUT: data.muestras_mV_OUT ? [...data.muestras_mV_OUT] : null,
     };
-    drawSignal(capturaActual.muestras);
+    drawSignal(muestrasGrafica, unidadGrafica);
     app.querySelector("#cantidad-final").textContent = String(capturaActual.muestras.length);
     app.querySelector("#frecuencia-final").textContent =
       `${capturaActual.frecuencia_muestreo_hz} Hz`;
-    app.querySelector("#unidad-final").textContent = capturaActual.unidad;
+    app.querySelector("#unidad-final").textContent = unidadGrafica === "mV_OUT"
+      ? "ADC original conservado · mV_OUT calibrados"
+      : data.estado_mV_OUT === "NO_CONFIABLE"
+        ? "ADC original · mV_OUT recibido, pero no confiable"
+        : "ADC original · mV_OUT no evaluable";
     app.querySelector("#origen-resumen").textContent =
       `Origen: SENSOR · ESP32 ${dispositivoEcg?.codigo ?? "ECG-001"} · resultado #${result.id}.`;
     app.querySelector("#descripcion-resumen").textContent =
-      "Captura ADC original recibida y guardada por la API. Sin filtros ni identificación automática de ondas.";
+      data.estado_mV_OUT === "NO_CONFIABLE"
+        ? "La API conserva mV_OUT recibidos, pero no puede verificar su procedencia; la gráfica muestra ADC original. No equivale a mV_ECG ni constituye interpretación clínica."
+        : "Captura ADC original recibida y guardada por la API. mV_OUT no evaluable; sin filtros ni identificación automática de ondas.";
     app.querySelector("#capturas-historicas").value = String(result.id);
     app.querySelector("#estado-guardado").textContent =
       `Resultado guardado: la API confirmó la captura #${result.id}.`;
@@ -772,11 +945,17 @@
   }
 
   function updateLiveSignal(state) {
+    const unidadGrafica = "ADC";
     const samples = state.muestras;
+    const stateForGraph = {
+      ...state,
+      muestras: samples,
+      unidad: unidadGrafica,
+    };
     if (samples.length > 0) {
       const changed = appendLiveSignalState(
         liveSignalBuffer,
-        state,
+        stateForGraph,
         performance.now()
       );
       if (changed) updateLiveSignalTrace(performance.now());
@@ -784,7 +963,10 @@
       app.querySelector("#cantidad-final").textContent = String(samples.length);
       app.querySelector("#frecuencia-final").textContent =
         `${state.frecuencia_muestreo_hz} Hz`;
-      app.querySelector("#unidad-final").textContent = state.unidad || "ADC";
+      app.querySelector("#unidad-final").textContent =
+        state.estado_mV_OUT === "NO_CONFIABLE"
+          ? "ADC original · mV_OUT recibido, pero no confiable"
+          : "ADC original · mV_OUT no evaluable";
     } else if (state.captura_abortada || state.adquisicion_id === "") {
       clearSignal();
     }

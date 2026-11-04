@@ -111,12 +111,13 @@
         </select>
         <p>Las capturas completas se guardan obligatoriamente en la API; los registros anteriores se conservan. La identificación experimental de ondas P, complejo QRS, onda T, PR o ST no está implementada.</p>
       </section>
-      <p id="estado-escala-vertical" class="signal-scale-status" role="status" aria-live="polite">Esperando muestras ADC crudas.</p>
+      <p id="estado-escala-vertical" class="signal-scale-status" role="status" aria-live="polite">Esperando la calibración ADC eFuse; se conservarán las muestras crudas ADC.</p>
+      <p id="aviso-calibracion-mv" class="notice"><strong>Unidades diferenciadas:</strong> cuando el calibrador line-fitting y la eFuse Vref verificada están disponibles, el gráfico muestra mV_OUT (tensión a la salida del AD8232) y conserva aparte todas las cuentas ADC originales. Esto no es mV_ECG: la ganancia y la transferencia del módulo AD8232 no están caracterizadas. Si falla la calibración, el gráfico indica ADC crudo y no presenta mV_OUT. No implica exactitud metrológica ni interpretación clínica.</p>
       <p id="estado-integridad-senal" role="status" aria-live="polite">El gráfico mostrará interrupciones de comunicación como segmentos separados; no se informan pérdidas internas de adquisición.</p>
-      <p>La cuadrícula muestra subdivisiones temporales orientativas (0,2 s y 1 s); no representa papel ECG calibrado ni una escala de 10 mm/mV. El trazo conserva ADC crudo, sin conversión a mV ni suavizado.</p>
+      <p>La cuadrícula muestra subdivisiones temporales orientativas (0,2 s y 1 s); no representa papel ECG calibrado ni una escala clínica de 10 mm/mV. La escala vertical se autoajusta para visualización. El trazo no aplica filtrado ni suavizado.</p>
       <svg id="grafico-senal" class="signal" viewBox="0 0 640 210" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="grafico-titulo grafico-descripcion">
         <title id="grafico-titulo">Señal ECG</title>
-        <desc id="grafico-descripcion">Ventana de 10 segundos con muestras ADC crudas. La cuadrícula no es una escala clínica calibrada.</desc>
+        <desc id="grafico-descripcion">Ventana de 10 segundos. Si la calibración ADC está disponible, se grafican mV_OUT de la salida del AD8232; si no, se muestran cuentas ADC crudas. La cuadrícula no es una escala clínica calibrada.</desc>
         <defs>
           <pattern id="ecg-subdivisiones" width="10.96" height="7" patternUnits="userSpaceOnUse">
             <path d="M 10.96 0 H 0 V 7" fill="none" stroke="#f3c7cc" stroke-width=".45"></path>
@@ -136,7 +137,7 @@
         <text x="72" y="180" font-size="10">0 s</text>
         <text id="tiempo-medio" x="346" y="180" text-anchor="middle" font-size="10">5 s</text>
         <text id="tiempo-total" x="620" y="180" text-anchor="end" font-size="10">10 s</text>
-        <text id="unidad-eje" x="72" y="198" font-size="11">Desviación visual centrada (sin unidad calibrada)</text>
+        <text id="unidad-eje" x="72" y="198" font-size="11">Esperando muestras</text>
         <g id="trazo-grupo" transform="translate(620 0)" clip-path="url(#recorte-senal)">
           <path id="trazo-senal" d="" fill="none" stroke="#1d4ed8" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="butt"></path>
         </g>
@@ -184,6 +185,8 @@
         <ul id="evaluacion-criterios"><li>No se evaluaron criterios clínicos; esto no significa normalidad.</li></ul>
         <p><strong>Parámetros no evaluables:</strong></p>
         <ul id="evaluacion-parametros-pendientes"><li>Pendiente de evaluar.</li></ul>
+        <p><strong>Resultado individual de reglas clínicas:</strong></p>
+        <ul id="evaluacion-reglas"><li>Pendiente de evaluación por el backend.</li></ul>
         <p><strong>Advertencias técnicas:</strong></p>
         <ul id="evaluacion-advertencias"><li>Pendientes de evaluación.</li></ul>
       </section>

@@ -1,4 +1,5 @@
-﻿from pathlib import Path as FilePath
+from copy import deepcopy
+from pathlib import Path as FilePath
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Response
@@ -24,12 +25,37 @@ from app.modules.ecg.schemas import (
 
 MODULO = "ecg"
 APP_DIR = FilePath(__file__).resolve().parents[2]
+MOTIVO_MV_OUT_NO_CONFIABLE = (
+    "La API no puede verificar la procedencia de mV_OUT ni de sus metadatos."
+)
 
 
 router = APIRouter(
     prefix="/api/v1/ecg",
     tags=["ECG"],
 )
+
+
+def _normalizar_procedencia_mV_OUT(data: dict) -> dict:
+    """Conserva las muestras, pero no atribuye confianza a datos del cliente."""
+    data_normalizada = deepcopy(data)
+    muestras_mv_out = data_normalizada.get("muestras_mV_OUT")
+    calibracion = data_normalizada.get("calibracion_adc")
+
+    if muestras_mv_out is not None:
+        data_normalizada["estado_mV_OUT"] = "NO_CONFIABLE"
+        if calibracion is not None:
+            calibracion["estado"] = "NO_CONFIABLE"
+            calibracion["error_codigo"] = None
+            calibracion["error"] = MOTIVO_MV_OUT_NO_CONFIABLE
+    elif calibracion is not None:
+        data_normalizada["estado_mV_OUT"] = "NO_EVALUABLE"
+        if calibracion["estado"] == "CALIBRADA":
+            calibracion["estado"] = "NO_CONFIABLE"
+            calibracion["error_codigo"] = None
+            calibracion["error"] = MOTIVO_MV_OUT_NO_CONFIABLE
+
+    return data_normalizada
 
 
 @router.get("/pantalla", include_in_schema=False)
@@ -71,7 +97,10 @@ def captura_simulada() -> dict[str, int | list[float] | str]:
         **generar_datos_ecg(),
         "adquisicion_id": str(uuid4()),
     }
-    return DatosECG.model_validate(data).model_dump(mode="json")
+    return DatosECG.model_validate(data).model_dump(
+        mode="json",
+        exclude_none=True,
+    )
 
 
 @router.get("/conexion")
@@ -127,7 +156,9 @@ def recibir_resultado(
                 detail="El dispositivo ECG-001 no está activo y disponible",
             )
 
-    data = entrada.data.model_dump(mode="json", exclude_none=True)
+    data = _normalizar_procedencia_mV_OUT(
+        entrada.data.model_dump(mode="json", exclude_none=True)
+    )
     adquisicion_id = data.get("adquisicion_id")
     if adquisicion_id is not None:
         existing = consultar_resultados(
@@ -144,7 +175,8 @@ def recibir_resultado(
             None,
         )
         if duplicate is not None:
-            if duplicate["data"] != data:
+            data_existente = _normalizar_procedencia_mV_OUT(duplicate["data"])
+            if data_existente != data:
                 raise HTTPException(
                     status_code=409,
                     detail="adquisicion_id ya existe con datos diferentes",
@@ -183,15 +215,18 @@ def obtener_resultados(
         episodio_id=episodio_id,
         modulo=MODULO,
     )
-    resultados = [
-        {
-            **resultado,
-            "evaluacion_preventiva": evaluar_captura_preventiva(
-                DatosECG.model_validate(resultado["data"])
-            ),
-        }
-        for resultado in resultados_guardados
-    ]
+    resultados = []
+    for resultado in resultados_guardados:
+        data = _normalizar_procedencia_mV_OUT(resultado["data"])
+        resultados.append(
+            {
+                **resultado,
+                "data": data,
+                "evaluacion_preventiva": evaluar_captura_preventiva(
+                    DatosECG.model_validate(data)
+                ),
+            }
+        )
 
     return {
         "episodio_id": episodio_id,

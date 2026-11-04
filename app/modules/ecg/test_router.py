@@ -27,7 +27,12 @@ from app.modules.ecg.schemas import (
     MUESTRAS_CAPTURA_SENSOR,
     RespuestaConsulta,
 )
-from app.modules.ecg.preventive_assessment import evaluar_captura_preventiva
+from app.modules.ecg.preventive_assessment import (
+    EvidenciaClinicaECG,
+    _construir_evaluacion_preventiva,
+    _evaluar_reglas,
+    evaluar_captura_preventiva,
+)
 from app.modules.ecg.simulator import generar_datos_ecg
 
 
@@ -111,6 +116,26 @@ def _entrada_sensor_valida(references, adquisicion_id="00000000-0000-4000-8000-0
     }
 
 
+def _metadatos_calibracion_adc_sinteticos(estado="CALIBRADA"):
+    return {
+        "estado": estado,
+        "metodo": "ESP_IDF_LINE_FITTING",
+        "fuente": "EFUSE_VREF",
+        "vref_efuse_raw": 17,
+        "vref_efuse_mv": 1093,
+        "adc_unit": "ADC1",
+        "gpio": 34,
+        "canal": 6,
+        "resolucion_bits": 12,
+        "atenuacion": "ADC_11db/ADC_ATTEN_DB_12",
+        "chip_model": "ESP32-D0WD-V3",
+        "chip_revision": 301,
+        "esp_idf_version": "v5.5.5",
+        "error_codigo": None if estado == "CALIBRADA" else 259,
+        "error": None if estado == "CALIBRADA" else "Fallo sintético de calibración",
+    }
+
+
 _FRONTEND_INTERACTION_HARNESS = r"""
 const vm = require("node:vm");
 const input = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
@@ -129,6 +154,25 @@ const capturedSensorResult = {
     frecuencia_muestreo_hz: 250,
     muestras: Array.from({ length: 2500 }, (_, index) => 1800 + (index % 200)),
     unidad: "ADC",
+    muestras_mV_OUT: Array.from({ length: 2500 }, () => 1800),
+    estado_mV_OUT: "NO_CONFIABLE",
+    calibracion_adc: {
+      estado: "NO_CONFIABLE",
+      metodo: "ESP_IDF_LINE_FITTING",
+      fuente: "EFUSE_VREF",
+      vref_efuse_raw: 17,
+      vref_efuse_mv: 1093,
+      adc_unit: "ADC1",
+      gpio: 34,
+      canal: 6,
+      resolucion_bits: 12,
+      atenuacion: "ADC_11db/ADC_ATTEN_DB_12",
+      chip_model: "ESP32-D0WD-V3",
+      chip_revision: 301,
+      esp_idf_version: "v5.5.5",
+      error_codigo: null,
+      error: "La API no puede verificar la procedencia.",
+    },
   },
 };
 
@@ -384,6 +428,8 @@ function snapshot(extra) {
     physicalStatus: elements.get("estado-fisico").textContent,
     timeAxis: elements.get("tiempo-total").textContent,
     source: elements.get("origen-resumen").textContent,
+    unitLabel: elements.get("unidad-final").textContent,
+    description: elements.get("descripcion-resumen").textContent,
     saveHidden: elements.get("guardar-resultado").hidden,
     sensorHistoryHidden: elements.get("capturas-historicas").hidden,
   };
@@ -476,6 +522,8 @@ process.stdout.write(JSON.stringify({
   nivel: elements.get("evaluacion-nivel").textContent,
   motivo: elements.get("evaluacion-motivo").textContent,
   datosTecnicos: elements.get("evaluacion-datos-tecnicos").textContent,
+  reglas: (elements.get("evaluacion-reglas").children || [])
+    .map((item) => item.textContent),
 }));
 """
 
@@ -715,6 +763,14 @@ context.appendLiveSignalState(probeBuffer, {
 }, 0);
 const centeredScale = context.visualAmplitudeScale([1800, 2048, 2300]);
 context.updateSignalScaleStatus([0, 2048, 4095], 2047.5);
+const adcSaturationStatus = displayElements.get("#estado-escala-vertical").textContent;
+const adcAxisLabels = [
+  displayElements.get("#amplitud-maxima").textContent,
+  displayElements.get("#amplitud-centro-escala").textContent,
+  displayElements.get("#amplitud-minima").textContent,
+  displayElements.get("#unidad-eje").textContent,
+];
+context.updateSignalScaleStatus([1090, 1093, 1098], 1094, "mV_OUT");
 process.stdout.write(JSON.stringify({
   size: buffer.size,
   capacity: buffer.capacity,
@@ -735,7 +791,10 @@ process.stdout.write(JSON.stringify({
   completePath: context.liveSignalPath(completeBuffer),
   probePath: context.liveSignalPath(probeBuffer),
   centeredScale,
-  saturationStatus: displayElements.get("#estado-escala-vertical").textContent,
+  saturationStatus: adcSaturationStatus,
+  axisLabels: adcAxisLabels,
+  calibratedStatus: displayElements.get("#estado-escala-vertical").textContent,
+  calibratedAxis: displayElements.get("#unidad-eje").textContent,
 }));
 """
 
@@ -775,6 +834,86 @@ def test_esquema_y_simulador_generan_datos_ecg_validos():
     assert all(math.isfinite(muestra) for muestra in datos["muestras"])
 
 
+def _evidencia_clinica_base(**cambios):
+    evidencia = {
+        "procedencia": "SINTETICA_PRUEBAS",
+        "calidad_senal_valida": True,
+        "colocacion_electrodos_correcta": True,
+        "inversion_electrodos_detectada": False,
+        "canales_ra_la_ll_disponibles": True,
+        "impedancia_ra_ohm": 1000,
+        "impedancia_la_ohm": 1000,
+        "impedancia_ll_ohm": 1000,
+        "excepciones_colocacion_evaluadas": True,
+        "excepcion_colocacion_presente": False,
+        "velocidad_papel_mm_s": 25,
+        "ganancia_mm_por_mv": 10,
+        "filtro_pasa_altos_hz": 0.05,
+        "filtro_pasa_bajos_hz": 150,
+        "filtros_configurados": True,
+        "notch_50_hz_aplicado": True,
+        "artefacto_excesivo": False,
+        "snr_db": 20,
+        "frecuencia_cardiaca_lpm": 75,
+        "deteccion_picos_r_verificada": True,
+        "algoritmo_picos_r": "PAN_TOMPKINS",
+        "metodo_calculo_fc": "RR_REGULAR_300",
+        "ritmo_regular_verificado": True,
+        "rr_cuadros_grandes": 4,
+        "rr_cuadros_pequenos": 20,
+        "paciente_en_reposo": True,
+        "atleta_alto_rendimiento": False,
+        "paciente_pediatrico": False,
+        "intervalos_rr_ms": [800, 800, 800],
+        "qrs_ms": 80,
+        "limites_qrs_verificados": True,
+        "wolff_parkinson_white": False,
+        "ritmo_marcapasos": False,
+        "pr_ms": 160,
+        "onda_p_clara": True,
+        "ritmo_sinusal": True,
+        "qt_ms": 400,
+        "rr_previo_ms": 800,
+        "qtc_ms": 440,
+        "qtc_verificado": True,
+        "qtc_coherente_con_qt_rr_y_metodo": True,
+        "sexo_regla_qtc": "H",
+        "metodo_qtc": "BAZETT",
+        "st_desviacion_mv": 0,
+        "adulto": True,
+        "linea_isoestable": True,
+        "punto_j_medido": True,
+        "amplitud_calibrada_mv": True,
+        "excepcion_st_t_presente": False,
+    }
+    evidencia.update(cambios)
+    return EvidenciaClinicaECG.model_validate(evidencia)
+
+
+def _evaluar_regla(
+    identificador,
+    evidencia=None,
+    frecuencia=500,
+    unidad="mV",
+    cantidad_muestras=MUESTRAS_CAPTURA_SENSOR,
+):
+    valores_muestra = {
+        "frecuencia_muestreo_hz": frecuencia,
+        "muestras": [0.1] * cantidad_muestras,
+        "unidad": unidad,
+    }
+    if cantidad_muestras > MUESTRAS_CAPTURA_SENSOR:
+        datos = DatosECG.model_construct(**valores_muestra)
+    else:
+        datos = DatosECG(**valores_muestra)
+    reglas = _evaluar_reglas(datos, evidencia)
+    evaluacion = _construir_evaluacion_preventiva(datos, reglas)
+    return evaluacion, next(
+        regla for regla in evaluacion.reglas
+        if regla.identificador == identificador
+    )
+
+
 def test_evaluacion_preventiva_no_clasifica_como_normal_senal_adc_actual():
     datos = DatosECG(
         frecuencia_muestreo_hz=250,
@@ -786,22 +925,32 @@ def test_evaluacion_preventiva_no_clasifica_como_normal_senal_adc_actual():
 
     assert evaluacion.nivel == "NO_EVALUABLE"
     assert evaluacion.color == "GRIS"
-    assert evaluacion.parametros_evaluados == []
-    assert evaluacion.valores_medidos == {}
-    assert evaluacion.criterios_activados == []
-    assert evaluacion.calidad_senal == "NO EVALUADA"
+    assert evaluacion.parametros_evaluados == ["RC-ECG-002"]
+    assert evaluacion.valores_medidos == {
+        "RC-ECG-002.frecuencia_muestreo_hz": 250.0,
+    }
+    assert evaluacion.criterios_activados == ["RC-ECG-002"]
+    assert evaluacion.calidad_senal == "NO EVALUADA O INSUFICIENTE"
     assert evaluacion.datos_tecnicos.cantidad_muestras == MUESTRAS_CAPTURA_SENSOR
     assert evaluacion.datos_tecnicos.frecuencia_muestreo_hz == 250
     assert any("al menos 500 Hz" in item for item in evaluacion.advertencias_tecnicas)
     assert any("no se convierten a mV" in item for item in evaluacion.advertencias_tecnicas)
     assert "normalidad" in evaluacion.motivo
-    assert len(evaluacion.parametros_no_evaluables) == 9
-    assert all(
-        f"RC-ECG-{rule_id:03d}" in evaluacion.parametros_no_evaluables[rule_id - 1]
-        for rule_id in range(1, 10)
-    )
+    assert len(evaluacion.reglas) == 9
+    assert [rule.estado for rule in evaluacion.reglas] == [
+        "NO_EVALUABLE",
+        "NO_CUMPLE",
+        "NO_EVALUABLE",
+        "NO_EVALUABLE",
+        "NO_EVALUABLE",
+        "NO_EVALUABLE",
+        "NO_EVALUABLE",
+        "NO_EVALUABLE",
+        "NO_EVALUABLE",
+    ]
+    assert len(evaluacion.parametros_no_evaluables) == 8
     assert "LO+/LO−" in evaluacion.parametros_no_evaluables[0]
-    assert "250 Hz" in evaluacion.motivo
+    assert "250 Hz" in evaluacion.reglas[1].motivo
     assert evaluacion.metricas_tecnicas.duracion_entre_muestras_segundos == pytest.approx(
         (MUESTRAS_CAPTURA_SENSOR - 1) / 250
     )
@@ -811,6 +960,348 @@ def test_evaluacion_preventiva_no_clasifica_como_normal_senal_adc_actual():
     assert evaluacion.metricas_tecnicas.muestras_distintas == 1
     assert evaluacion.metricas_tecnicas.muestras_adc_en_riel_inferior == 0
     assert evaluacion.metricas_tecnicas.muestras_adc_en_riel_superior == 0
+
+
+@pytest.mark.parametrize(
+    ("evidence_changes", "expected"),
+    [
+        ({}, "CUMPLE"),
+        ({"colocacion_electrodos_correcta": False}, "NO_CUMPLE"),
+        ({"inversion_electrodos_detectada": True}, "NO_CUMPLE"),
+        ({"canales_ra_la_ll_disponibles": False}, "NO_EVALUABLE"),
+        ({"impedancia_ra_ohm": None}, "NO_EVALUABLE"),
+        ({"excepciones_colocacion_evaluadas": None}, "NO_EVALUABLE"),
+        ({"excepcion_colocacion_presente": True}, "NO_EVALUABLE"),
+        ({"colocacion_electrodos_correcta": None}, "NO_EVALUABLE"),
+    ],
+)
+def test_rc_ecg_001_evalua_colocacion_solo_con_verificacion_y_impedancias(
+    evidence_changes, expected
+):
+    _, rule = _evaluar_regla(
+        "RC-ECG-001", _evidencia_clinica_base(**evidence_changes)
+    )
+
+    assert rule.estado == expected
+
+
+@pytest.mark.parametrize(
+    ("frequency", "evidence_changes", "expected"),
+    [
+        (499, {}, "NO_CUMPLE"),
+        (500, {}, "CUMPLE"),
+        (500, {"snr_db": 14.99}, "NO_CUMPLE"),
+        (500, {"velocidad_papel_mm_s": 24.9}, "NO_CUMPLE"),
+        (500, {"filtro_pasa_altos_hz": None}, "NO_EVALUABLE"),
+        (500, {"ritmo_marcapasos": None}, "NO_EVALUABLE"),
+        (500, {"ritmo_marcapasos": True, "filtro_pasa_bajos_hz": 250}, "CUMPLE"),
+        (500, {"ritmo_marcapasos": True, "filtro_pasa_bajos_hz": 150}, "NO_CUMPLE"),
+    ],
+)
+def test_rc_ecg_002_evalua_requisitos_tecnicos_y_snr(
+    frequency, evidence_changes, expected
+):
+    _, rule = _evaluar_regla(
+        "RC-ECG-002",
+        _evidencia_clinica_base(**evidence_changes),
+        frecuencia=frequency,
+    )
+
+    assert rule.estado == expected
+
+
+@pytest.mark.parametrize(
+    ("heart_rate", "expected"),
+    [(49, "NO_CUMPLE"), (50, "NO_EVALUABLE"), (120, "NO_EVALUABLE"), (125, "NO_CUMPLE")],
+)
+def test_rc_ecg_003_aplica_solo_los_cortes_de_alerta_explicitos(
+    heart_rate, expected
+):
+    _, rule = _evaluar_regla(
+        "RC-ECG-003",
+        _evidencia_clinica_base(
+            frecuencia_cardiaca_lpm=heart_rate,
+            rr_cuadros_grandes=300 / heart_rate,
+        ),
+    )
+
+    assert rule.estado == expected
+
+
+@pytest.mark.parametrize(
+    "evidence_changes",
+    [
+        {"deteccion_picos_r_verificada": None},
+        {"deteccion_picos_r_verificada": False},
+        {"algoritmo_picos_r": None},
+        {"metodo_calculo_fc": None},
+        {"ritmo_regular_verificado": None},
+        {"rr_cuadros_grandes": None},
+        {"frecuencia_cardiaca_lpm": 74},
+    ],
+)
+def test_rc_ecg_003_no_evalua_frecuencia_sin_deteccion_y_metodo_requeridos(
+    evidence_changes,
+):
+    _, rule = _evaluar_regla(
+        "RC-ECG-003",
+        _evidencia_clinica_base(**evidence_changes),
+    )
+
+    assert rule.estado == "NO_EVALUABLE"
+
+
+def test_rc_ecg_003_exige_metodo_coherente_con_regularidad_verificada():
+    _, rule = _evaluar_regla(
+        "RC-ECG-003",
+        _evidencia_clinica_base(ritmo_regular_verificado=False),
+    )
+
+    assert rule.estado == "NO_EVALUABLE"
+    assert "no corresponde" in rule.motivo
+
+
+@pytest.mark.parametrize(
+    ("method", "regular", "qrs_count", "count", "expected"),
+    [
+        ("QRS_6S_X10", False, 4, 3001, "NO_CUMPLE"),
+        ("QRS_6S_X10", False, 4, 2500, "NO_EVALUABLE"),
+        ("QRS_10S_X6", False, 4, 5001, "NO_CUMPLE"),
+        ("RR_REGULAR_1500", True, None, 2500, "NO_EVALUABLE"),
+    ],
+)
+def test_rc_ecg_003_aplica_formula_y_ventana_documentadas(
+    method, regular, qrs_count, count, expected
+):
+    changes = {
+        "ritmo_regular_verificado": regular,
+        "metodo_calculo_fc": method,
+        "qrs_contados": qrs_count,
+    }
+    if method == "QRS_6S_X10":
+        changes["frecuencia_cardiaca_lpm"] = qrs_count * 10
+    elif method == "QRS_10S_X6":
+        changes["frecuencia_cardiaca_lpm"] = qrs_count * 6
+    else:
+        changes["frecuencia_cardiaca_lpm"] = 75
+    _, rule = _evaluar_regla(
+        "RC-ECG-003",
+        _evidencia_clinica_base(**changes),
+        cantidad_muestras=count,
+    )
+
+    assert rule.estado == expected
+
+
+def test_rc_ecg_003_no_acepta_fc_inconsistente_con_formula_de_rr():
+    _, rule = _evaluar_regla(
+        "RC-ECG-003",
+        _evidencia_clinica_base(
+            frecuencia_cardiaca_lpm=74,
+            rr_cuadros_grandes=4,
+        ),
+    )
+
+    assert rule.estado == "NO_EVALUABLE"
+    assert "no coincide" in rule.motivo
+
+
+def test_rc_ecg_003_rechaza_algoritmo_de_picos_r_no_documentado():
+    with pytest.raises(ValidationError):
+        _evidencia_clinica_base(algoritmo_picos_r="NO_VALIDADO")
+
+
+@pytest.mark.parametrize(
+    "evidence_changes",
+    [
+        {"intervalos_rr_ms": [800, 800, 800]},
+        {"intervalos_rr_ms": [800, 900, 1100]},
+        {"intervalos_rr_ms": None},
+    ],
+)
+def test_rc_ecg_004_no_inventa_cortes_de_regularidad(evidence_changes):
+    _, rule = _evaluar_regla(
+        "RC-ECG-004", _evidencia_clinica_base(**evidence_changes)
+    )
+
+    assert rule.estado == "NO_EVALUABLE"
+    assert "al menos 10 segundos" in rule.motivo
+
+
+def test_rc_ecg_005_no_evalua_fa_sin_derivacion_deteccion_y_severidad_resuelta():
+    _, rule = _evaluar_regla(
+        "RC-ECG-005", _evidencia_clinica_base()
+    )
+
+    assert rule.estado == "NO_EVALUABLE"
+    assert "DII/V1" in rule.motivo
+    assert "amarillo-roja" in rule.motivo
+
+
+@pytest.mark.parametrize(
+    ("qrs_ms", "expected"),
+    [
+        (99.9, "CUMPLE"),
+        (100, "NO_CUMPLE"),
+        (119, "NO_CUMPLE"),
+        (119.5, "NO_EVALUABLE"),
+        (120, "NO_CUMPLE"),
+        (130, "NO_CUMPLE"),
+    ],
+)
+def test_rc_ecg_006_clasifica_solo_los_rangos_qrs_especificados(qrs_ms, expected):
+    _, rule = _evaluar_regla(
+        "RC-ECG-006", _evidencia_clinica_base(qrs_ms=qrs_ms)
+    )
+
+    assert rule.estado == expected
+
+
+@pytest.mark.parametrize(
+    ("pr_ms", "expected"),
+    [
+        (119.9, "NO_CUMPLE"),
+        (120, "CUMPLE"),
+        (200, "CUMPLE"),
+        (200.1, "NO_CUMPLE"),
+    ],
+)
+def test_rc_ecg_007_clasifica_pr_y_los_limites_inclusivos(pr_ms, expected):
+    _, rule = _evaluar_regla(
+        "RC-ECG-007", _evidencia_clinica_base(pr_ms=pr_ms)
+    )
+
+    assert rule.estado == expected
+
+
+def test_rc_ecg_007_no_evalua_ritmo_no_sinusal():
+    _, rule = _evaluar_regla(
+        "RC-ECG-007", _evidencia_clinica_base(ritmo_sinusal=False)
+    )
+
+    assert rule.estado == "NO_EVALUABLE"
+
+
+@pytest.mark.parametrize(
+    ("qtc_ms", "sexo", "expected"),
+    [
+        (450, "H", "CUMPLE"),
+        (460, "M", "CUMPLE"),
+        (451, "H", "NO_EVALUABLE"),
+        (470, "M", "NO_EVALUABLE"),
+        (500, "H", "NO_EVALUABLE"),
+        (500.01, "H", "NO_CUMPLE"),
+    ],
+)
+def test_rc_ecg_008_usa_limites_claros_y_deja_tramo_ambiguo_no_evaluable(
+    qtc_ms, sexo, expected
+):
+    _, rule = _evaluar_regla(
+        "RC-ECG-008",
+        _evidencia_clinica_base(qtc_ms=qtc_ms, sexo_regla_qtc=sexo),
+    )
+
+    assert rule.estado == expected
+
+
+def test_rc_ecg_008_no_calcula_con_formula_ambigua_o_metodo_inconsistente():
+    _, unverified = _evaluar_regla(
+        "RC-ECG-008", _evidencia_clinica_base(qtc_verificado=False)
+    )
+    _, incoherent = _evaluar_regla(
+        "RC-ECG-008",
+        _evidencia_clinica_base(qtc_coherente_con_qt_rr_y_metodo=False),
+    )
+    _, coherence_missing = _evaluar_regla(
+        "RC-ECG-008",
+        _evidencia_clinica_base(qtc_coherente_con_qt_rr_y_metodo=None),
+    )
+    _, wrong_method = _evaluar_regla(
+        "RC-ECG-008",
+        _evidencia_clinica_base(metodo_qtc="FRIDERICIA"),
+    )
+
+    assert unverified.estado == "NO_EVALUABLE"
+    assert "fórmula ambigua" in unverified.motivo
+    assert incoherent.estado == "NO_EVALUABLE"
+    assert coherence_missing.estado == "NO_EVALUABLE"
+    assert wrong_method.estado == "NO_EVALUABLE"
+
+
+@pytest.mark.parametrize(
+    ("st_mv", "expected"),
+    [(0.1, "NO_CUMPLE"), (-0.1, "NO_CUMPLE"), (0.099, "NO_EVALUABLE")],
+)
+def test_rc_ecg_009_aplica_corte_st_solo_con_calibracion_y_punto_j(
+    st_mv, expected
+):
+    _, rule = _evaluar_regla(
+        "RC-ECG-009",
+        _evidencia_clinica_base(st_desviacion_mv=st_mv),
+    )
+
+    assert rule.estado == expected
+
+
+@pytest.mark.parametrize(
+    "evidence_changes",
+    [
+        {"amplitud_calibrada_mv": False},
+        {"punto_j_medido": False},
+        {"linea_isoestable": False},
+        {"excepcion_st_t_presente": True},
+    ],
+)
+def test_rc_ecg_009_no_evalua_sin_calibracion_referencia_o_con_excepcion(
+    evidence_changes,
+):
+    _, rule = _evaluar_regla(
+        "RC-ECG-009",
+        _evidencia_clinica_base(**evidence_changes),
+    )
+
+    assert rule.estado == "NO_EVALUABLE"
+
+
+def test_evaluador_rechaza_evidencia_no_finita():
+    with pytest.raises(ValidationError):
+        _evidencia_clinica_base(snr_db=float("nan"))
+
+
+def test_evaluador_publico_rechaza_fixtures_sinteticos_como_evidencia_clinica():
+    datos = DatosECG(
+        frecuencia_muestreo_hz=500,
+        muestras=[0.1] * MUESTRAS_CAPTURA_SENSOR,
+        unidad="mV",
+    )
+
+    with pytest.raises(ValueError, match="fixtures sintéticos"):
+        evaluar_captura_preventiva(datos, _evidencia_clinica_base())
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected_level", "expected_color"),
+    [
+        (None, "NO_EVALUABLE", "GRIS"),
+        (_evidencia_clinica_base(qrs_ms=130), "AMARILLO", "AMARILLO"),
+        (_evidencia_clinica_base(qtc_ms=501), "ROJO", "ROJO"),
+    ],
+)
+def test_semaforo_backend_prioriza_rojo_y_no_marca_normal_con_reglas_incompletas(
+    evidence, expected_level, expected_color
+):
+    evaluation, _ = _evaluar_regla("RC-ECG-006", evidence)
+
+    assert evaluation.nivel == expected_level
+    assert evaluation.color == expected_color
+    assert next(
+        rule for rule in evaluation.reglas
+        if rule.identificador == "RC-ECG-004"
+    ).estado == "NO_EVALUABLE"
+    assert next(
+        rule for rule in evaluation.reglas
+        if rule.identificador == "RC-ECG-005"
+    ).estado == "NO_EVALUABLE"
 
 
 def test_evaluacion_preventiva_muestras_incompletas_sigue_no_evaluable():
@@ -825,8 +1316,8 @@ def test_evaluacion_preventiva_muestras_incompletas_sigue_no_evaluable():
     assert evaluacion.nivel == "NO_EVALUABLE"
     assert evaluacion.color == "GRIS"
     assert evaluacion.datos_tecnicos.cantidad_muestras == 1
-    assert evaluacion.parametros_evaluados == []
-    assert evaluacion.calidad_senal == "NO EVALUADA"
+    assert evaluacion.parametros_evaluados == ["RC-ECG-002"]
+    assert evaluacion.calidad_senal == "NO EVALUADA O INSUFICIENTE"
 
 
 def test_evaluacion_preventiva_no_pasa_a_verde_solo_por_superar_frecuencia():
@@ -863,11 +1354,14 @@ def test_frecuencia_minima_documentada_no_habilita_clasificacion_clinica(
     )
 
     evaluation = evaluar_captura_preventiva(datos)
-    quality_requirement = evaluation.parametros_no_evaluables[1]
+    quality_requirement = next(
+        rule for rule in evaluation.reglas
+        if rule.identificador == "RC-ECG-002"
+    ).motivo
 
     assert evaluation.nivel == "NO_EVALUABLE"
     assert evaluation.color == "GRIS"
-    assert ("menor que 500 Hz" in quality_requirement) is expects_below_minimum
+    assert ("al menos 500 Hz" in quality_requirement) is expects_below_minimum
 
 
 @pytest.mark.parametrize(
@@ -932,6 +1426,18 @@ def test_frontend_presenta_metricas_tecnicas_devueltas_por_backend(ecg_client):
     assert "muestras ADC en 0/4095: 1/1" in rendered["datosTecnicos"]
 
 
+def _reglas_sinteticas_cumplen():
+    return [
+        {
+            "identificador": f"RC-ECG-{rule_id:03d}",
+            "estado": "CUMPLE",
+            "motivo": "Fixture sintético para validar solo la estructura del esquema.",
+            "valores_medidos": {"medicion_sintetica": float(rule_id)},
+        }
+        for rule_id in range(1, 10)
+    ]
+
+
 @pytest.mark.parametrize(
     ("nivel", "color"),
     [
@@ -942,25 +1448,147 @@ def test_frontend_presenta_metricas_tecnicas_devueltas_por_backend(ecg_client):
     ],
 )
 def test_esquema_evaluacion_admite_los_cuatro_estados(nivel, color):
+    synthetic_green_fixture = nivel == "VERDE"
     evaluacion = EvaluacionPreventivaECG(
         nivel=nivel,
         color=color,
         motivo="Justificación del estado recibido.",
-        parametros_evaluados=["PR"] if nivel == "VERDE" else [],
-        valores_medidos={"PR_ms": 160} if nivel == "VERDE" else {},
+        parametros_evaluados=(
+            [f"RC-ECG-{rule_id:03d}" for rule_id in range(1, 10)]
+            if synthetic_green_fixture
+            else []
+        ),
+        valores_medidos=(
+            {
+                f"RC-ECG-{rule_id:03d}.medicion_sintetica": float(rule_id)
+                for rule_id in range(1, 10)
+            }
+            if synthetic_green_fixture
+            else {}
+        ),
         criterios_activados=[],
         parametros_no_evaluables=[],
-        calidad_senal="NO EVALUADA",
+        calidad_senal=(
+            "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA"
+            if synthetic_green_fixture
+            else "NO EVALUADA"
+        ),
         datos_tecnicos={
-            "frecuencia_muestreo_hz": 250,
-            "cantidad_muestras": MUESTRAS_CAPTURA_SENSOR,
-            "unidad": "ADC",
+            "frecuencia_muestreo_hz": 500 if synthetic_green_fixture else 250,
+            "cantidad_muestras": 5001 if synthetic_green_fixture else MUESTRAS_CAPTURA_SENSOR,
+            "unidad": "mV" if synthetic_green_fixture else "ADC",
         },
         advertencias_tecnicas=[],
+        reglas=_reglas_sinteticas_cumplen() if synthetic_green_fixture else [],
     )
 
     assert evaluacion.nivel == nivel
     assert evaluacion.color == color
+
+
+@pytest.mark.parametrize(
+    ("rules", "quality", "non_evaluable", "frequency", "count", "unit"),
+    [
+        (
+            _reglas_sinteticas_cumplen()[:-1],
+            "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA",
+            [],
+            500,
+            5001,
+            "mV",
+        ),
+        (
+            _reglas_sinteticas_cumplen()[:4]
+            + [{
+                **_reglas_sinteticas_cumplen()[4],
+                "estado": "NO_EVALUABLE",
+            }]
+            + _reglas_sinteticas_cumplen()[5:],
+            "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA",
+            [],
+            500,
+            5001,
+            "mV",
+        ),
+        (
+            _reglas_sinteticas_cumplen(),
+            "NO EVALUADA",
+            [],
+            500,
+            5001,
+            "mV",
+        ),
+        (
+            _reglas_sinteticas_cumplen(),
+            "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA",
+            ["RC-ECG-004: falta evidencia"],
+            500,
+            5001,
+            "mV",
+        ),
+        (
+            _reglas_sinteticas_cumplen(),
+            "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA",
+            [],
+            250,
+            MUESTRAS_CAPTURA_SENSOR,
+            "mV",
+        ),
+        (
+            _reglas_sinteticas_cumplen(),
+            "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA",
+            [],
+            500,
+            MUESTRAS_CAPTURA_SENSOR,
+            "mV",
+        ),
+        (
+            _reglas_sinteticas_cumplen(),
+            "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA",
+            [],
+            500,
+            5001,
+            "ADC",
+        ),
+        (
+            _reglas_sinteticas_cumplen()[:1]
+            + [{
+                **_reglas_sinteticas_cumplen()[1],
+                "valores_medidos": {},
+            }]
+            + _reglas_sinteticas_cumplen()[2:],
+            "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA",
+            [],
+            500,
+            5001,
+            "mV",
+        ),
+    ],
+)
+def test_esquema_rechaza_verde_incompleto_o_sin_calidad_apta(
+    rules, quality, non_evaluable, frequency, count, unit
+):
+    with pytest.raises(ValidationError):
+        EvaluacionPreventivaECG(
+            nivel="VERDE",
+            color="VERDE",
+            motivo="Fixture sintético; no es una evaluación clínica.",
+            parametros_evaluados=[f"RC-ECG-{rule_id:03d}" for rule_id in range(1, 10)],
+            valores_medidos={
+                f"RC-ECG-{rule_id:03d}.medicion_sintetica": float(rule_id)
+                for rule_id in range(1, 10)
+            },
+            criterios_activados=[],
+            parametros_no_evaluables=non_evaluable,
+            calidad_senal=quality,
+            datos_tecnicos={
+                "frecuencia_muestreo_hz": frequency,
+                "cantidad_muestras": count,
+                "unidad": unit,
+            },
+            advertencias_tecnicas=[],
+            reglas=rules,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1004,21 +1632,38 @@ def test_esquema_rechaza_estado_inconsistente_o_verde_sin_mediciones(
 def test_frontend_destaca_estado_y_motivo_recibidos_del_backend(
     ecg_client, nivel, color
 ):
+    synthetic_green_fixture = nivel == "VERDE"
     assessment = EvaluacionPreventivaECG(
         nivel=nivel,
         color=color,
         motivo=f"Motivo recibido para {nivel}.",
-        parametros_evaluados=["PR"] if nivel == "VERDE" else [],
-        valores_medidos={"PR_ms": 160} if nivel == "VERDE" else {},
+        parametros_evaluados=(
+            [f"RC-ECG-{rule_id:03d}" for rule_id in range(1, 10)]
+            if synthetic_green_fixture
+            else []
+        ),
+        valores_medidos=(
+            {
+                f"RC-ECG-{rule_id:03d}.medicion_sintetica": float(rule_id)
+                for rule_id in range(1, 10)
+            }
+            if synthetic_green_fixture
+            else {}
+        ),
         criterios_activados=[],
         parametros_no_evaluables=[],
-        calidad_senal="NO EVALUADA",
+        calidad_senal=(
+            "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA"
+            if synthetic_green_fixture
+            else "NO EVALUADA"
+        ),
         datos_tecnicos={
-            "frecuencia_muestreo_hz": 250,
-            "cantidad_muestras": MUESTRAS_CAPTURA_SENSOR,
-            "unidad": "ADC",
+            "frecuencia_muestreo_hz": 500 if synthetic_green_fixture else 250,
+            "cantidad_muestras": 5001 if synthetic_green_fixture else MUESTRAS_CAPTURA_SENSOR,
+            "unidad": "mV" if synthetic_green_fixture else "ADC",
         },
         advertencias_tecnicas=[],
+        reglas=_reglas_sinteticas_cumplen() if synthetic_green_fixture else [],
     )
 
     rendered = _render_preventive_assessment(
@@ -1055,6 +1700,29 @@ def test_frontend_captura_actual_se_muestra_gris(ecg_client):
     assert rendered["motivo"] == assessment.motivo
 
 
+def test_frontend_muestra_resultados_individuales_devuelto_por_backend(ecg_client):
+    evidence = _evidencia_clinica_base(
+        frecuencia_cardiaca_lpm=48,
+        rr_cuadros_grandes=6.25,
+    )
+    assessment, _ = _evaluar_regla("RC-ECG-003", evidence)
+
+    rendered = _render_preventive_assessment(
+        ecg_client, assessment.model_dump(mode="json")
+    )
+
+    assert rendered["nivel"] == "AMARILLO · AMARILLO"
+    assert len(rendered["reglas"]) == 9
+    assert any(
+        item.startswith("RC-ECG-003 · NO_CUMPLE:")
+        for item in rendered["reglas"]
+    )
+    assert any(
+        item.startswith("RC-ECG-004 · NO_EVALUABLE:")
+        for item in rendered["reglas"]
+    )
+
+
 def test_frontend_datos_incompletos_no_se_muestran_verdes(ecg_client):
     rendered = _render_preventive_assessment(
         ecg_client,
@@ -1070,6 +1738,64 @@ def test_frontend_datos_incompletos_no_se_muestran_verdes(ecg_client):
     assert "no se puede inferir normalidad" in rendered["motivo"]
 
 
+@pytest.mark.parametrize(
+    "invalid_condition",
+    [
+        "rule_non_evaluable",
+        "missing_rule",
+        "low_frequency",
+        "short_capture",
+        "adc_units",
+        "quality_not_apt",
+        "pending_rule",
+    ],
+)
+def test_frontend_rechaza_verde_si_reglas_o_calidad_no_son_validas(
+    ecg_client, invalid_condition
+):
+    assessment = {
+        "nivel": "VERDE",
+        "color": "VERDE",
+        "motivo": "Fixture sintético; no es una evaluación clínica.",
+        "parametros_evaluados": [
+            f"RC-ECG-{rule_id:03d}" for rule_id in range(1, 10)
+        ],
+        "valores_medidos": {"fixture_sintetico": 1.0},
+        "criterios_activados": [],
+        "parametros_no_evaluables": [],
+        "calidad_senal": "APTA SEGÚN LOS CRITERIOS TÉCNICOS DE LA FICHA",
+        "datos_tecnicos": {
+            "frecuencia_muestreo_hz": 500,
+            "cantidad_muestras": 5001,
+            "unidad": "mV",
+        },
+        "advertencias_tecnicas": [],
+        "reglas": _reglas_sinteticas_cumplen(),
+    }
+    if invalid_condition == "rule_non_evaluable":
+        assessment["reglas"][3]["estado"] = "NO_EVALUABLE"
+    elif invalid_condition == "missing_rule":
+        assessment["reglas"].pop()
+    elif invalid_condition == "low_frequency":
+        assessment["datos_tecnicos"]["frecuencia_muestreo_hz"] = 250
+    elif invalid_condition == "short_capture":
+        assessment["datos_tecnicos"]["cantidad_muestras"] = MUESTRAS_CAPTURA_SENSOR
+    elif invalid_condition == "adc_units":
+        assessment["datos_tecnicos"]["unidad"] = "ADC"
+    elif invalid_condition == "quality_not_apt":
+        assessment["calidad_senal"] = "NO EVALUADA"
+    else:
+        assessment["parametros_no_evaluables"] = ["RC-ECG-004: falta evidencia"]
+
+    rendered = _render_preventive_assessment(ecg_client, assessment)
+
+    selected = [card for card in rendered["cards"] if card["selected"]]
+    assert [(card["nivel"], card["color"]) for card in selected] == [
+        ("NO_EVALUABLE", "GRIS")
+    ]
+    assert rendered["nivel"].startswith("NO EVALUABLE")
+
+
 def test_evaluacion_preventiva_no_infiere_calidad_ni_alerta_desde_muestras_ruidosas():
     datos = DatosECG(
         frecuencia_muestreo_hz=250,
@@ -1080,9 +1806,13 @@ def test_evaluacion_preventiva_no_infiere_calidad_ni_alerta_desde_muestras_ruido
     evaluacion = evaluar_captura_preventiva(datos)
 
     assert evaluacion.nivel == "NO_EVALUABLE"
-    assert evaluacion.calidad_senal == "NO EVALUADA"
-    assert evaluacion.valores_medidos == {}
-    assert any("SNR <15 dB" in item for item in evaluacion.parametros_no_evaluables)
+    assert evaluacion.calidad_senal == "NO EVALUADA O INSUFICIENTE"
+    assert evaluacion.valores_medidos == {
+        "RC-ECG-002.frecuencia_muestreo_hz": 250.0,
+    }
+    assert evaluacion.reglas[1].estado == "NO_CUMPLE"
+    assert "250 Hz" in evaluacion.reglas[1].motivo
+    assert evaluacion.reglas[8].estado == "NO_EVALUABLE"
     assert any("Ruido eléctrico e interferencias" in item for item in evaluacion.advertencias_tecnicas)
 
 
@@ -1186,6 +1916,104 @@ def test_datos_ecg_rechaza_campos_y_valores_invalidos(datos):
         DatosECG.model_validate(datos)
 
 
+def test_datos_ecg_conserva_adc_y_muestras_mV_OUT_independientes():
+    datos = DatosECG(
+        frecuencia_muestreo_hz=250,
+        muestras=[2048, 2050, 2047],
+        unidad="ADC",
+        muestras_mV_OUT=[1651, 1652, 1650],
+        calibracion_adc=_metadatos_calibracion_adc_sinteticos(),
+    )
+
+    assert datos.muestras == [2048, 2050, 2047]
+    assert datos.muestras_mV_OUT == [1651, 1652, 1650]
+    assert datos.calibracion_adc.vref_efuse_mv == 1093
+
+
+def test_datos_ecg_marca_mV_OUT_no_confiable_sin_atribuir_autenticidad():
+    datos = DatosECG(
+        frecuencia_muestreo_hz=250,
+        muestras=[2048],
+        unidad="ADC",
+        muestras_mV_OUT=[1651],
+        estado_mV_OUT="NO_CONFIABLE",
+    )
+
+    assert datos.muestras == [2048]
+    assert datos.muestras_mV_OUT == [1651]
+    assert datos.estado_mV_OUT == "NO_CONFIABLE"
+
+
+def test_datos_ecg_rechaza_estado_mV_OUT_verificado_declarado_por_cliente():
+    datos = {
+        "frecuencia_muestreo_hz": 250,
+        "muestras": [2048],
+        "unidad": "ADC",
+        "muestras_mV_OUT": [1651],
+        "estado_mV_OUT": "VERIFICADA",
+    }
+
+    with pytest.raises(ValidationError):
+        DatosECG.model_validate(datos)
+
+
+@pytest.mark.parametrize(
+    "cambios",
+    [
+        {"muestras_mV_OUT": [1000]},
+        {"muestras_mV_OUT": [1000, 1001]},
+        {
+            "muestras_mV_OUT": [1000, 1001],
+            "calibracion_adc": _metadatos_calibracion_adc_sinteticos("ERROR"),
+        },
+        {
+            "muestras_mV_OUT": [1000, 1001],
+            "calibracion_adc": {
+                **_metadatos_calibracion_adc_sinteticos(),
+                "vref_efuse_mv": 1100,
+            },
+        },
+        {
+            "muestras_mV_OUT": [1000, 1001],
+            "calibracion_adc": {
+                **_metadatos_calibracion_adc_sinteticos(),
+                "chip_model": "ESP32-S3",
+            },
+        },
+    ],
+)
+def test_datos_ecg_rechaza_mV_OUT_sin_evidencia_calibracion_coherente(cambios):
+    with pytest.raises(ValidationError):
+        DatosECG(
+            frecuencia_muestreo_hz=250,
+            muestras=[2048, 2050],
+            unidad="ADC",
+            **cambios,
+        )
+
+
+def test_datos_ecg_rechaza_estado_calibrado_sin_muestras_mV_OUT():
+    with pytest.raises(ValidationError):
+        DatosECG(
+            frecuencia_muestreo_hz=250,
+            muestras=[2048],
+            unidad="ADC",
+            calibracion_adc=_metadatos_calibracion_adc_sinteticos(),
+        )
+
+
+def test_datos_ecg_rechaza_muestras_mV_OUT_no_enteras_o_negativas():
+    for muestras_mv_out in ([1000.5], [-1], [True]):
+        with pytest.raises(ValidationError):
+            DatosECG(
+                frecuencia_muestreo_hz=250,
+                muestras=[2048],
+                unidad="ADC",
+                muestras_mV_OUT=muestras_mv_out,
+                calibracion_adc=_metadatos_calibracion_adc_sinteticos(),
+            )
+
+
 @pytest.mark.parametrize(
     "campo,valor",
     [
@@ -1278,6 +2106,122 @@ def test_post_resultados_recibe_captura_sensor_y_persiste(ecg_client, test_engin
     assert resultado.modulo == "ecg"
     assert resultado.dispositivo_id == ecg_references["dispositivo_id"]
     assert json.loads(resultado.data_json) == entrada["data"]
+
+
+def test_post_get_mV_OUT_preserva_adc_y_capturas_historicas(
+    ecg_client, test_engine, ecg_references
+):
+    historica = _entrada_sensor_valida(
+        ecg_references,
+        adquisicion_id="00000000-0000-4000-8000-000000000088",
+    )
+    entrada = _entrada_sensor_valida(
+        ecg_references,
+        adquisicion_id="00000000-0000-4000-8000-000000000089",
+    )
+    entrada["data"]["muestras_mV_OUT"] = [
+        1651 + (index % 4) for index in range(MUESTRAS_CAPTURA_SENSOR)
+    ]
+    entrada["data"]["calibracion_adc"] = _metadatos_calibracion_adc_sinteticos()
+
+    guardado_historico = ecg_client.post(RUTA, json=historica)
+    guardado_calibrado = ecg_client.post(RUTA, json=entrada)
+    consulta = ecg_client.get(f"{RUTA}/{ecg_references['episodio_id']}")
+
+    assert guardado_historico.status_code == 201
+    assert guardado_calibrado.status_code == 201
+    assert consulta.status_code == 200
+    resultados = consulta.json()["resultados"]
+    assert len(resultados) == 2
+    assert resultados[0]["data"]["muestras"] == historica["data"]["muestras"]
+    assert "muestras_mV_OUT" not in resultados[0]["data"]
+    assert resultados[1]["data"]["muestras"] == entrada["data"]["muestras"]
+    assert resultados[1]["data"]["muestras_mV_OUT"] == entrada["data"]["muestras_mV_OUT"]
+    assert resultados[1]["data"]["estado_mV_OUT"] == "NO_CONFIABLE"
+    assert resultados[1]["data"]["calibracion_adc"]["estado"] == "NO_CONFIABLE"
+    assert "no puede verificar" in resultados[1]["data"]["calibracion_adc"]["error"]
+    assert resultados[1]["evaluacion_preventiva"]["nivel"] == "NO_EVALUABLE"
+    with Session(test_engine) as session:
+        persistidos = session.exec(select(ResultadoModulo)).all()
+    historico_guardado = json.loads(persistidos[0].data_json)
+    assert historico_guardado == historica["data"]
+    datos_mv_guardados = json.loads(persistidos[1].data_json)
+    assert datos_mv_guardados["muestras"] == entrada["data"]["muestras"]
+    assert datos_mv_guardados["estado_mV_OUT"] == "NO_CONFIABLE"
+    assert datos_mv_guardados["calibracion_adc"]["estado"] == "NO_CONFIABLE"
+
+
+def test_get_degrada_calibracion_historica_sin_modificar_el_registro(
+    ecg_client, test_engine, ecg_references
+):
+    entrada = _entrada_sensor_valida(
+        ecg_references,
+        adquisicion_id="00000000-0000-4000-8000-000000000091",
+    )
+    entrada["data"]["muestras_mV_OUT"] = [
+        1651 + (index % 4) for index in range(MUESTRAS_CAPTURA_SENSOR)
+    ]
+    entrada["data"]["calibracion_adc"] = _metadatos_calibracion_adc_sinteticos()
+    json_historico = json.dumps(entrada["data"])
+    with Session(test_engine) as session:
+        resultado = ResultadoModulo(
+            episodio_id=ecg_references["episodio_id"],
+            dispositivo_id=ecg_references["dispositivo_id"],
+            modulo="ecg",
+            data_json=json_historico,
+        )
+        session.add(resultado)
+        session.commit()
+
+    consulta = ecg_client.get(f"{RUTA}/{ecg_references['episodio_id']}")
+
+    assert consulta.status_code == 200
+    data = consulta.json()["resultados"][0]["data"]
+    assert data["muestras"] == entrada["data"]["muestras"]
+    assert data["muestras_mV_OUT"] == entrada["data"]["muestras_mV_OUT"]
+    assert data["estado_mV_OUT"] == "NO_CONFIABLE"
+    assert data["calibracion_adc"]["estado"] == "NO_CONFIABLE"
+    with Session(test_engine) as session:
+        persistido = session.exec(select(ResultadoModulo)).one()
+    assert persistido.data_json == json_historico
+
+    reintento = ecg_client.post(RUTA, json=entrada)
+
+    assert reintento.status_code == 200
+    with Session(test_engine) as session:
+        persistido = session.exec(select(ResultadoModulo)).one()
+    assert persistido.data_json == json_historico
+
+
+def test_frontend_muestra_ADC_y_no_grafica_mV_OUT_no_confiable(ecg_client):
+    result = _run_frontend_interaction_test(ecg_client, "sensor-mode")
+
+    assert "ADC original" in result["unitLabel"]
+    assert "no confiable" in result["unitLabel"]
+    assert "mV_OUT calibrados" not in result["description"]
+
+
+def test_post_get_conserva_adc_y_error_calibracion_sin_mV_OUT(
+    ecg_client, ecg_references
+):
+    entrada = _entrada_sensor_valida(
+        ecg_references,
+        adquisicion_id="00000000-0000-4000-8000-000000000090",
+    )
+    entrada["data"]["calibracion_adc"] = _metadatos_calibracion_adc_sinteticos(
+        "ERROR"
+    )
+
+    guardado = ecg_client.post(RUTA, json=entrada)
+    consulta = ecg_client.get(f"{RUTA}/{ecg_references['episodio_id']}")
+
+    assert guardado.status_code == 201
+    result = consulta.json()["resultados"][0]
+    assert result["data"]["muestras"] == entrada["data"]["muestras"]
+    assert result["data"]["calibracion_adc"]["estado"] == "ERROR"
+    assert result["data"]["estado_mV_OUT"] == "NO_EVALUABLE"
+    assert "muestras_mV_OUT" not in result["data"]
+    assert result["evaluacion_preventiva"]["nivel"] == "NO_EVALUABLE"
 
 
 @pytest.mark.parametrize(
@@ -1579,6 +2523,12 @@ def test_flujo_sensor_adquisicion_guardado_consulta_y_confirmacion_frontend(
     assert len(result["data"]["muestras"]) == MUESTRAS_CAPTURA_SENSOR
     assert result["evaluacion_preventiva"]["nivel"] == "NO_EVALUABLE"
     assert result["evaluacion_preventiva"]["color"] == "GRIS"
+    assert len(result["evaluacion_preventiva"]["reglas"]) == 9
+    assert result["evaluacion_preventiva"]["reglas"][1]["estado"] == "NO_CUMPLE"
+    assert all(
+        rule["estado"] == "NO_EVALUABLE"
+        for rule in result["evaluacion_preventiva"]["reglas"][2:]
+    )
 
     frontend = _run_sensor_persistence_poll(
         ecg_client, body, entrada["data"]["adquisicion_id"]
@@ -1725,15 +2675,23 @@ def test_grafica_ecg_centra_la_linea_base_y_autoajusta_solo_la_presentacion(ecg_
     assert result["probePath"] == " ".join(expected_points)
     assert result["centeredScale"] == {"baseline": 2050, "amplitude": 250}
     assert "línea base visual ADC: 2047.5" in result["saturationStatus"]
-    assert "Fuente ADC cruda; no convertida a mV." in result["saturationStatus"]
+    assert "No se dispone de mV_OUT calibrados." in result["saturationStatus"]
     assert "Muestras en rieles 0/4095: 1/1" in result["saturationStatus"]
+    assert result["axisLabels"] == [
+        "4095", "2047.5", "0", "ADC (cuentas; autoescala visual, no mV)"
+    ]
     html = ecg_client.get("/api/v1/ecg/pantalla").text
     assert 'id="escala-vertical"' not in html
     assert "Completa:" not in html
     assert "Reducida:" not in html
     assert "no representa papel ECG calibrado" in html
-    assert "sin unidad calibrada" in html
-    assert "Desviación visual centrada" in html
+    assert "mV_OUT (tensión a la salida del AD8232)" in html
+    assert "Esto no es mV_ECG" in html
+    assert "eFuse Vref verificada" in html
+    assert result["calibratedAxis"] == (
+        "mV_OUT (tensión calibrada a la salida del AD8232; autoescala)"
+    )
+    assert "No representa mV_ECG" in result["calibratedStatus"]
 
 
 def test_grafica_ecg_no_conecta_muestras_tras_desconexion(ecg_client):
