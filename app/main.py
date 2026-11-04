@@ -76,8 +76,8 @@ def create_app() -> FastAPI:
         branding = (
             '<header class="api-masthead">'
             '<a class="api-brand" href="/" aria-label="Volver al inicio">'
-            '<span class="api-brand-mark" aria-hidden="true">T</span>'
-            '<span><strong>Tótem</strong><small>TRIAJE PREVENTIVO</small></span>'
+            '<span class="api-brand-mark" aria-hidden="true">♥</span>'
+            '<span><strong>Tótem Preventivo</strong><small>GUÍA DE PRUEBAS PREVENTIVAS</small></span>'
             '</a><nav aria-label="Navegación de la API">'
             '<a href="/">Inicio</a><a href="/health">Estado del servicio</a>'
             '<a href="/openapi.json">OpenAPI JSON</a>'

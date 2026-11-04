@@ -37,7 +37,7 @@
     audio: null,
     resolver: null,
     formulario: null,
-    nivelSenal: "NORMAL",
+    nivelSeñal: "NORMAL",
   };
 
   function mensaje(texto, esError) {
@@ -133,7 +133,7 @@
     };
     const reportaProblemaAuditivo =
       estado.formulario.tiene_problema_auditivo || problemasAuditivos.length > 0;
-    estado.nivelSenal = reportaProblemaAuditivo
+    estado.nivelSeñal = reportaProblemaAuditivo
       ? "REDUCIDO_POR_AUTOINFORME"
       : "NORMAL";
     $("aviso-volumen-reducido").hidden = !reportaProblemaAuditivo;
@@ -201,7 +201,7 @@
     osc.type = "sine";
     osc.frequency.value = frecuenciaHz;
     ganancia.gain.setValueAtTime(0, t);
-    const volumen = estado.nivelSenal === "REDUCIDO_POR_AUTOINFORME"
+    const volumen = estado.nivelSeñal === "REDUCIDO_POR_AUTOINFORME"
       ? VOLUMEN_REDUCIDO
       : VOLUMEN;
     ganancia.gain.linearRampToValueAtTime(volumen, t + 0.05);
@@ -345,7 +345,7 @@
           origen: origenDeLosDatos(),
           data: {
             ensayos: estado.ensayos,
-            nivel_senal: estado.nivelSenal,
+            nivel_señal: estado.nivelSeñal,
             cuestionario: estado.formulario,
           },
         }),

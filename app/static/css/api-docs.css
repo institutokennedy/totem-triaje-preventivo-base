@@ -1,11 +1,11 @@
 :root {
   color-scheme: light;
-  --api-ink: #17332f;
-  --api-muted: #60716d;
-  --api-paper: #f2f6f4;
-  --api-line: #dce6e1;
-  --api-teal: #087e72;
-  --api-dark: #05645b;
+  --api-ink: #173746;
+  --api-muted: #587184;
+  --api-paper: #f3faf9;
+  --api-line: #d7e8e8;
+  --api-teal: #0b7f83;
+  --api-dark: #086c70;
 }
 
 * { box-sizing: border-box; }
@@ -39,7 +39,7 @@ body {
   border-radius: .65rem;
   color: #fff;
   background: var(--api-teal);
-  font-family: Georgia, serif;
+  font-family: "Segoe UI", Tahoma, sans-serif;
   font-size: 1.25rem;
 }
 .api-brand strong, .api-brand small { display: block; }
@@ -95,7 +95,7 @@ body {
 .api-intro h1 {
   margin: 0;
   color: var(--api-ink);
-  font-family: Georgia, serif;
+  font-family: "Segoe UI", Tahoma, sans-serif;
   font-size: clamp(1.8rem, 4vw, 2.5rem);
   font-weight: 600;
 }
@@ -137,7 +137,7 @@ body {
   padding: .8rem .35rem;
   border-bottom-color: var(--api-line);
   color: var(--api-ink);
-  font-family: Georgia, serif;
+  font-family: "Segoe UI", Tahoma, sans-serif;
   font-size: 1.12rem;
 }
 .swagger-ui .opblock {

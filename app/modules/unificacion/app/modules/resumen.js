@@ -30,7 +30,7 @@
   const mensaje = (txt, error) => {
     const el = $("mensaje");
     el.textContent = txt;
-    el.style.color = error ? "#c62828" : "#2e7d32";
+    el.classList.toggle("error", Boolean(error));
   };
 
   function etiqueta(m) {

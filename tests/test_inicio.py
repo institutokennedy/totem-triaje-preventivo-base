@@ -3,11 +3,16 @@ def test_inicio_carga_pantalla_y_script(client):
 
     assert pagina.status_code == 200
     assert "Prueba de Audiometría" in pagina.text
+    assert "Tu recorrido preventivo" in pagina.text
+    assert "Etapas del recorrido" in pagina.text
+    assert "Circuito de demostración con paciente ficticio" in pagina.text
     assert "Comenzar" in pagina.text
     assert '<form id="form-inicio"' not in pagina.text
     assert "fecha_nacimiento" not in pagina.text
     assert "selector-episodio" not in pagina.text
     assert client.get("/static/js/inicio.js").status_code == 200
+    assert client.get("/static/css/app.css").status_code == 200
+    assert client.get("/static/js/app.js").status_code == 200
 
 
 def test_comenzar_crea_episodio_nuevo_sin_reutilizar_los_anteriores(

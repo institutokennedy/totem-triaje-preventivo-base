@@ -20,7 +20,7 @@ POR_MODULO = {
                 "frecuencias_hz": [500, 1000, 2000],
                 "resultados_oido_derecho": [True, False, False],
                 "resultados_oido_izquierdo": [True, True, True],
-                "nivel_senal": "REDUCIDO_POR_AUTOINFORME",
+                "nivel_señal": "REDUCIDO_POR_AUTOINFORME",
                 "cuestionario": {"tiene_problema_auditivo": True, "factores": ["diabetes"]},
             },
         }
@@ -42,7 +42,7 @@ def test_entrada_calcula_frecuencias_no_percibidas_y_no_incluye_datos_personales
     oido = entrada["modulos"]["oido"]
     assert oido["frecuencias_no_percibidas_derecho"] == [1000, 2000]
     assert oido["frecuencias_no_percibidas_izquierdo"] == []
-    assert oido["nivel_senal"] == "REDUCIDO_POR_AUTOINFORME"
+    assert oido["nivel_señal"] == "REDUCIDO_POR_AUTOINFORME"
     assert oido["cuestionario"]["tiene_problema_auditivo"] is True
     assert oido["cuestionario"]["factores"] == ["diabetes"]
     assert entrada["edad_anios"] == 16

@@ -25,6 +25,7 @@ Actualmente el repositorio incluye:
 - módulo para consultar dispositivos;
 - módulo de demostración `demo_ambiente`;
 - flujo web para registrar o reutilizar pacientes e iniciar un episodio;
+- identidad visual compartida para las pantallas disponibles: bienvenida, oído, resúmenes y Swagger/OpenAPI;
 - evaluación auditiva con respuestas por botones en pantalla, sin hardware externo;
 - reducción automática de la ganancia digital de los tonos cuando se informa un problema auditivo; esta reducción no representa ni garantiza un nivel calibrado en dB SPL;
 - generación de informe HTML con integración opcional de análisis orientativo mediante IA;

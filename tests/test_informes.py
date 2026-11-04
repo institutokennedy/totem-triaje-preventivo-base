@@ -90,7 +90,7 @@ def test_resultado_oido_se_incluye_en_informe(client, demo_references, monkeypat
             "frecuencias_hz": [500, 1000],
             "resultados_oido_derecho": [True, False],
             "resultados_oido_izquierdo": [True, True],
-            "nivel_senal": "REDUCIDO_POR_AUTOINFORME",
+            "nivel_señal": "REDUCIDO_POR_AUTOINFORME",
             "cuestionario": {
                 "tiene_problema_auditivo": True,
                 "problemas_auditivos": ["hipoacusia"],
@@ -124,7 +124,7 @@ def test_resultado_oido_se_incluye_en_informe(client, demo_references, monkeypat
     assert reporte_oido["resultados_oido_derecho"] == [True, False]
     assert reporte_oido["resultados_oido_izquierdo"] == [True, True]
     assert reporte_oido["origen"] == "SIMULADOR"
-    assert registro_oido["data"]["nivel_senal"] == "REDUCIDO_POR_AUTOINFORME"
+    assert registro_oido["data"]["nivel_señal"] == "REDUCIDO_POR_AUTOINFORME"
     assert registro_oido["data"]["cuestionario"]["problemas_auditivos"] == [
         "hipoacusia"
     ]
@@ -133,7 +133,7 @@ def test_resultado_oido_se_incluye_en_informe(client, demo_references, monkeypat
         True,
         False,
     ]
-    assert entrada_ia["modulos"]["oido"]["nivel_senal"] == "REDUCIDO_POR_AUTOINFORME"
+    assert entrada_ia["modulos"]["oido"]["nivel_señal"] == "REDUCIDO_POR_AUTOINFORME"
     assert entrada_ia["modulos"]["oido"]["cuestionario"] == {
         "tiene_problema_auditivo": True,
         "problemas_auditivos": ["hipoacusia"],

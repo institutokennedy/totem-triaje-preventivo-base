@@ -87,7 +87,7 @@ def test_crear_resultado_exitoso(entorno):
     assert r.status_code == 200
     assert len(r.json()) == 1
     assert r.json()[0]["data_json"]["frecuencias_hz"] == [500, 1000, 2000]
-    assert r.json()[0]["data_json"]["nivel_senal"] == "NORMAL"
+    assert r.json()[0]["data_json"]["nivel_señal"] == "NORMAL"
 
 
 def test_crear_resultado_con_lados_aleatorios(entorno):
@@ -156,19 +156,19 @@ def test_resultado_con_ensayo_invalido_o_formatos_mezclados(entorno):
     assert client.post("/api/v1/oido/resultados", json=base).status_code == 422
 
 
-def test_resultado_guarda_nivel_de_senal_reducido(entorno):
+def test_resultado_guarda_nivel_de_señal_reducido(entorno):
     client, ep, disp = entorno
     r = client.post(
         "/api/v1/oido/resultados",
         json=_payload(
             ep,
             disp,
-            nivel_senal="REDUCIDO_POR_AUTOINFORME",
+            nivel_señal="REDUCIDO_POR_AUTOINFORME",
         ),
     )
 
     assert r.status_code == 201
-    assert r.json()["data_json"]["nivel_senal"] == "REDUCIDO_POR_AUTOINFORME"
+    assert r.json()["data_json"]["nivel_señal"] == "REDUCIDO_POR_AUTOINFORME"
 
 
 def test_listas_vacias(entorno):

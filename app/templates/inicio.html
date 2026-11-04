@@ -1,101 +1,179 @@
 {% extends "base.html" %}
+{% set etapa_actual = 1 %}
 
-{% block title %}Prueba de Audiometría · Tótem{% endblock %}
+{% block title %}Bienvenida · Tótem Preventivo{% endblock %}
 
-{% block content %}
+{% block head %}
 <style>
-  .portada-audiometria {
+  .welcome-hero {
     display: grid;
-    grid-template-columns: 1.1fr .9fr;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, .9fr);
     align-items: center;
-    gap: clamp(1.5rem, 5vw, 3.5rem);
-    overflow: hidden;
-    min-height: 390px;
-    padding: clamp(1.5rem, 5vw, 3.5rem);
+    gap: clamp(1.5rem, 5vw, 3rem);
+    padding: clamp(1.4rem, 4vw, 2.7rem);
     border: 1px solid var(--line);
-    border-radius: 12px;
-    background: linear-gradient(125deg, #fff 48%, #e7f2ee 48%);
-    box-shadow: 0 12px 32px rgba(23, 51, 47, .08);
-    animation: arrive .35s ease-out both;
+    border-radius: 1.25rem;
+    background: linear-gradient(115deg, rgba(255,255,255,.97) 42%, #edf8f6 100%);
+    box-shadow: var(--shadow);
+    animation: arrive .3s ease-out both;
   }
-  .portada-contenido { position: relative; z-index: 1; }
-  .portada-etiqueta {
-    display: inline-block;
-    margin-bottom: 1rem;
-    padding: .4rem .75rem;
-    border-radius: 999px;
+  .welcome-copy { min-width: 0; }
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    margin: 0 0 1rem;
     color: var(--teal-dark);
-    background: #e8f2ef;
-    font-size: .8rem;
-    font-weight: 700;
-    letter-spacing: .04em;
+    font-size: .73rem;
+    font-weight: 800;
+    letter-spacing: .12em;
     text-transform: uppercase;
   }
-  .portada-audiometria h1 { max-width: 12ch; margin-bottom: .8rem; }
-  .portada-descripcion { max-width: 42ch; margin: 0 0 1.5rem; color: var(--muted); }
-  .portada-pasos { display: flex; flex-wrap: wrap; gap: .55rem 1.1rem; margin: 0 0 1.6rem; padding: 0; list-style: none; }
-  .portada-pasos li { display: flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .9rem; }
-  .paso-numero {
+  .eyebrow::before { width: 1.25rem; height: 2px; background: #27aaa0; content: ""; }
+  .welcome-hero h1 { max-width: 17ch; margin-bottom: .85rem; }
+  .welcome-hero h1 span { color: var(--teal); }
+  .welcome-description { max-width: 52ch; margin: 0 0 1.3rem; color: var(--muted); font-size: 1.05rem; }
+  .welcome-action { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; }
+  #btn-comenzar { min-width: 12.5rem; min-height: 3.25rem; }
+  .fiction-note { color: var(--muted); font-size: .82rem; }
+  .welcome-art {
     display: grid;
-    width: 1.5rem;
-    aspect-ratio: 1;
+    min-height: 18rem;
     place-items: center;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #d5eeea;
+    border-radius: 1.4rem;
+    background: linear-gradient(145deg, #e5f6f1, #edf5fc);
+  }
+  .welcome-art::before, .welcome-art::after {
+    position: absolute;
+    width: 7rem;
+    aspect-ratio: 1;
     border-radius: 50%;
-    color: white;
-    background: var(--teal);
-    font-size: .78rem;
-    font-weight: 700;
+    background: rgba(195, 230, 224, .52);
+    content: "";
   }
-  #btn-comenzar {
-    min-width: 10rem;
-    min-height: 3.1rem;
-    border-radius: 8px;
-    font-size: 1.05rem;
+  .welcome-art::before { top: 1rem; right: 1.5rem; }
+  .welcome-art::after { bottom: .7rem; left: 1rem; background: rgba(209, 229, 244, .6); }
+  .welcome-art svg { position: relative; z-index: 1; width: min(100% - 1.5rem, 390px); height: auto; }
+  .art-caption {
+    position: absolute;
+    right: .8rem;
+    bottom: .8rem;
+    z-index: 2;
+    padding: .6rem .8rem;
+    border: 1px solid var(--line);
+    border-radius: .7rem;
+    color: var(--teal-dark);
+    background: rgba(255,255,255,.96);
+    font-size: .75rem;
+    font-weight: 750;
   }
-  .portada-aviso { min-height: 1.5rem; margin: .85rem 0 0; color: var(--coral); }
-  .portada-ilustracion { width: 100%; max-width: 340px; justify-self: center; }
-  .portada-ilustracion svg { display: block; width: 100%; height: auto; }
-  @media (max-width: 640px) {
-    .portada-audiometria { grid-template-columns: 1fr; gap: .5rem; background: #fff; }
-    .portada-ilustracion { width: min(75%, 230px); grid-row: 1; }
-    .portada-contenido { grid-row: 2; }
-    .portada-audiometria h1 { max-width: none; }
+  .keyboard-hint {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    margin-top: 1rem;
+    padding: .65rem .8rem;
+    border: 1px solid #cee4e8;
+    border-radius: .75rem;
+    color: #355a69;
+    background: #eaf5f7;
+    font-size: .8rem;
+    font-weight: 650;
+  }
+  kbd {
+    padding: .1rem .35rem;
+    border: 1px solid #b7cbd0;
+    border-radius: .3rem;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    font-weight: 750;
+  }
+  .welcome-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .9rem; margin-top: 1.1rem; }
+  .welcome-card {
+    display: flex;
+    align-items: flex-start;
+    gap: .7rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 1rem;
+    background: rgba(255,255,255,.95);
+  }
+  .welcome-card-icon { display: grid; flex: 0 0 2.6rem; width: 2.6rem; aspect-ratio: 1; place-items: center; border-radius: .8rem; color: var(--teal-dark); background: var(--teal-soft); font-weight: 800; }
+  .welcome-card strong { display: block; margin: .15rem 0 .25rem; font-size: .9rem; }
+  .welcome-card p { margin: 0; color: var(--muted); font-size: .79rem; line-height: 1.45; }
+  .welcome-message { min-height: 1.5rem; margin: .8rem 0 0; color: var(--coral); font-weight: 650; }
+  @media (max-width: 720px) {
+    .welcome-hero { grid-template-columns: 1fr; gap: 1.2rem; }
+    .welcome-art { min-height: 15rem; }
+    .welcome-cards { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 560px) {
+    .keyboard-hint { flex-wrap: wrap; }
   }
 </style>
+{% endblock %}
 
-<section class="portada-audiometria" aria-labelledby="titulo-audiometria">
-  <div class="portada-contenido">
-    <span class="portada-etiqueta">Evaluación auditiva</span>
-    <h1 id="titulo-audiometria">Prueba de Audiometría</h1>
-    <p class="portada-descripcion">
-      Una experiencia sencilla para explorar cómo percibe distintos sonidos cada oído.
-      Use auriculares y siga las instrucciones en pantalla.
+{% block content %}
+<section class="welcome-hero" aria-labelledby="welcome-title">
+  <div class="welcome-copy">
+    <p class="eyebrow">Bienvenida · Demostración educativa</p>
+    <h1 id="welcome-title">Tu recorrido preventivo, <span>guiado paso a paso.</span></h1>
+    <p class="welcome-description">
+      Vas a recibir instrucciones antes de cada etapa y podrás revisar el resultado antes de confirmarlo.
     </p>
-    <ul class="portada-pasos" aria-label="Pasos de la prueba">
-      <li><span class="paso-numero">1</span> Lea las instrucciones</li>
-      <li><span class="paso-numero">2</span> Escuche los tonos</li>
-      <li><span class="paso-numero">3</span> Responda</li>
-    </ul>
-    <button id="btn-comenzar" type="button">Comenzar</button>
-    <p id="inicio-mensaje" class="portada-aviso" role="status" aria-live="polite"></p>
+    <div class="welcome-action">
+      <button id="btn-comenzar" type="button">Comenzar <span aria-hidden="true">→</span></button>
+      <span class="fiction-note">Circuito de demostración con paciente ficticio</span>
+    </div>
+    <p id="inicio-mensaje" class="welcome-message" role="status" aria-live="polite"></p>
+    <div class="keyboard-hint" aria-label="Atajos de teclado">
+      <span aria-hidden="true">▤</span>
+      <kbd>Enter</kbd> Comenzar
+      <span aria-hidden="true">·</span>
+      <kbd>Tab</kbd> Moverte
+      <span aria-hidden="true">·</span>
+      <kbd>H</kbd> Ayuda
+    </div>
   </div>
-
-  <div class="portada-ilustracion">
-    <svg viewBox="0 0 360 320" role="img" aria-labelledby="ilustracion-titulo ilustracion-descripcion">
-      <title id="ilustracion-titulo">Ilustración de ondas sonoras y un oído</title>
-      <desc id="ilustracion-descripcion">Ondas de sonido rodean una ilustración estilizada de un oído.</desc>
-      <circle cx="180" cy="160" r="138" fill="#d9ebe5"/>
-      <circle cx="180" cy="160" r="111" fill="#eef6f2"/>
-      <path d="M104 148c0-43 32-76 76-76s76 33 76 76c0 28-14 47-34 64-13 11-18 22-18 38 0 16-11 27-27 27-17 0-28-12-28-29"
-            fill="none" stroke="#087e72" stroke-linecap="round" stroke-width="15"/>
-      <path d="M146 151c0-20 14-35 34-35s35 15 35 35c0 16-8 25-20 36-11 10-17 21-17 37"
-            fill="none" stroke="#c65a45" stroke-linecap="round" stroke-width="10"/>
-      <path d="M83 125c-12 20-12 48 0 68M62 111c-19 29-19 67 0 96M277 125c12 20 12 48 0 68M298 111c19 29 19 67 0 96"
-            fill="none" stroke="#087e72" stroke-linecap="round" stroke-width="7" opacity=".7"/>
-      <circle cx="179" cy="218" r="8" fill="#e8a23a"/>
-      <path d="M168 270c12 10 31 10 43 0" fill="none" stroke="#087e72" stroke-linecap="round" stroke-width="6"/>
+  <div class="welcome-art">
+    <svg viewBox="0 0 420 300" role="img" aria-labelledby="welcome-art-title welcome-art-desc">
+      <title id="welcome-art-title">Ilustración de una persona y un equipo preventivo</title>
+      <desc id="welcome-art-desc">Una persona junto a una pantalla con un símbolo de pulso y un indicador de confirmación.</desc>
+      <rect x="236" y="52" width="134" height="202" rx="20" fill="#173f50"/>
+      <rect x="246" y="64" width="114" height="158" rx="10" fill="#fff"/>
+      <rect x="263" y="80" width="80" height="13" rx="7" fill="#dcefea"/>
+      <circle cx="303" cy="135" r="31" fill="#d4f4eb"/>
+      <path d="M280 136h12l8-15 9 29 8-14h14" fill="none" stroke="#0b7f83" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="274" y="231" width="58" height="8" rx="4" fill="#0b7f83"/>
+      <circle cx="151" cy="115" r="40" fill="#ffd1b6"/>
+      <path d="M111 111c3-39 76-53 86 0-13-15-23-21-35-20-17 1-25 16-51 20Z" fill="#213e53"/>
+      <path d="M96 222c2-54 24-81 55-81s53 27 55 81" fill="#24878b"/>
+      <path d="m120 180 31 26 31-26" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="89" y="219" width="124" height="13" rx="7" fill="#176a70"/>
+      <circle cx="229" cy="71" r="17" fill="#fff"/>
+      <path d="M219 71h20M229 61v20" stroke="#0b7f83" stroke-width="5" stroke-linecap="round"/>
     </svg>
+    <span class="art-caption">✓ Instrucciones claras, una etapa a la vez</span>
   </div>
+</section>
+
+<section class="welcome-cards" aria-label="Características del recorrido">
+  <article class="welcome-card">
+    <span class="welcome-card-icon" aria-hidden="true">▤</span>
+    <div><strong>Una etapa por vez</strong><p>La siguiente pantalla aparece en el orden correcto.</p></div>
+  </article>
+  <article class="welcome-card">
+    <span class="welcome-card-icon" aria-hidden="true">?</span>
+    <div><strong>Instrucciones simples</strong><p>Leé cómo prepararte antes de comenzar la prueba.</p></div>
+  </article>
+  <article class="welcome-card">
+    <span class="welcome-card-icon" aria-hidden="true">✓</span>
+    <div><strong>Revisá antes de confirmar</strong><p>El informe aclara el carácter preventivo de los datos.</p></div>
+  </article>
 </section>
 {% endblock %}
 

@@ -30,7 +30,7 @@ class DatosOido(BaseModel):
     resultados_oido_derecho: List[StrictBool] | None = None
     resultados_oido_izquierdo: List[StrictBool] | None = None
     ensayos: list[EnsayoOido] | None = None
-    nivel_senal: Literal["NORMAL", "REDUCIDO_POR_AUTOINFORME"] = "NORMAL"
+    nivel_señal: Literal["NORMAL", "REDUCIDO_POR_AUTOINFORME"] = "NORMAL"
     cuestionario: CuestionarioOido | None = None
 
     @model_validator(mode="after")

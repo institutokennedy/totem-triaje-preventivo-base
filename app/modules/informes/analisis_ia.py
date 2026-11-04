@@ -93,7 +93,7 @@ Criterios:
 describe las respuestas sin inferir una pérdida auditiva ni una capacidad de localización clínica. En el formato anterior, \
 las frecuencias no percibidas por oído están calculadas en los datos. No concluyas que hay pérdida auditiva; \
 señala los hallazgos y recomienda control profesional cuando corresponda. \
-Si nivel_senal es REDUCIDO_POR_AUTOINFORME, aclara que el volumen se redujo por una respuesta afirmativa \
+Si nivel_señal es REDUCIDO_POR_AUTOINFORME, aclara que el volumen se redujo por una respuesta afirmativa \
 y no interpretes la falta de percepción como comparable con una medición de volumen normal. \
 Integra en la clasificación los síntomas y factores de riesgo marcados en el cuestionario, además de las mediciones. \
 Trata las respuestas como información declarada por la persona, no como diagnósticos confirmados. \
@@ -132,7 +132,7 @@ def _preparar_modulo(nombre: str, datos: dict) -> dict:
                 if isinstance(ensayo, dict)
                 and {"frecuencia_hz", "lado_estimulo", "respuesta"} <= ensayo.keys()
             ],
-            "nivel_senal": datos.get("nivel_senal", "NORMAL"),
+            "nivel_señal": datos.get("nivel_señal", "NORMAL"),
             "cuestionario": {
                 clave: datos["cuestionario"][clave]
                 for clave in (
@@ -151,7 +151,7 @@ def _preparar_modulo(nombre: str, datos: dict) -> dict:
     izquierdo = datos.get("resultados_oido_izquierdo") or []
     salida = {
         "total_frecuencias": len(frecuencias),
-        "nivel_senal": datos.get("nivel_senal", "NORMAL"),
+        "nivel_señal": datos.get("nivel_señal", "NORMAL"),
         "frecuencias_hz": frecuencias,
         "resultados_oido_derecho": derecho,
         "resultados_oido_izquierdo": izquierdo,

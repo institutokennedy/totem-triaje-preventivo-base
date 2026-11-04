@@ -572,7 +572,9 @@ def construir_reporte(
                 for frecuencia, valor in zip(frecuencias, valores)
             )
             mediciones.append([etiqueta, resumen])
-        if datos_oido.get("nivel_senal") == "REDUCIDO_POR_AUTOINFORME":
+        if datos_oido.get(
+            "nivel_señal", datos_oido.get("nivel_senal")
+        ) == "REDUCIDO_POR_AUTOINFORME":
             mediciones.append(
                 [
                     "Ajuste aplicado por autoinforme",
@@ -622,8 +624,8 @@ CSS = """
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  background: linear-gradient(180deg, #eef2ff 0%, #f8fafc 100%);
-  color: #1f2937;
+  background: linear-gradient(180deg, #eaf6f4 0%, #f3faf9 100%);
+  color: #173746;
   font-family: "Segoe UI", "DejaVu Sans", Verdana, Arial, sans-serif;
   font-size: 14px;
 }
@@ -631,13 +633,13 @@ body {
   width: min(900px, 100%);
   margin: 24px auto;
   background: #ffffff;
-  border: 1px solid #dfe7f5;
+  border: 1px solid #d7e8e8;
   border-radius: 18px;
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
   overflow: hidden;
 }
 .encabezado {
-  background: linear-gradient(135deg, #5b2d9a 0%, #2d4ba6 100%);
+  background: linear-gradient(135deg, #0b7f83 0%, #086c70 100%);
   color: #ffffff;
   padding: 26px 30px 22px;
 }
@@ -665,7 +667,7 @@ body {
 .encabezado p {
   margin: 8px 0 0;
   font-size: 12px;
-  color: #e9d5ff;
+  color: #d7f0ec;
   font-style: italic;
 }
 .badge-estado {
@@ -685,8 +687,8 @@ body {
   padding: 24px 28px 28px;
 }
 .panel {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: #f3f8f8;
+  border: 1px solid #dce9e9;
   border-radius: 14px;
   padding: 18px;
   margin-bottom: 18px;
@@ -697,7 +699,7 @@ body {
   letter-spacing: 0.7px;
   text-transform: uppercase;
   font-weight: 800;
-  color: #475569;
+  color: #355a69;
 }
 .module-heading {
   display: flex;
@@ -708,17 +710,17 @@ body {
 .module-state {
   flex: 0 0 auto;
   padding: 4px 9px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #dce9e9;
   border-radius: 999px;
-  color: #64748b;
-  background: #f8fafc;
+  color: #587184;
+  background: #f3f8f8;
   font-size: 10px;
   font-weight: 700;
 }
 .module-state.disponible {
-  border-color: #bbf7d0;
-  color: #166534;
-  background: #f0fdf4;
+  border-color: #bde2da;
+  color: #086c70;
+  background: #e6f5f2;
 }
 .metric-grid {
   display: grid;
@@ -727,14 +729,14 @@ body {
 }
 .metric {
   background: #ffffff;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #dce9e9;
   border-radius: 10px;
   padding: 10px 12px;
 }
 .metric-label {
   display: block;
   font-size: 11px;
-  color: #64748b;
+  color: #587184;
   text-transform: uppercase;
   letter-spacing: 0.8px;
   margin-bottom: 4px;
@@ -742,7 +744,7 @@ body {
 .metric-value {
   font-size: 15px;
   font-weight: 700;
-  color: #0f172a;
+  color: #173746;
 }
 .resultados-nota {
   margin: 12px 0 0;
@@ -798,9 +800,9 @@ body {
 .leyenda {
   margin-top: 18px;
   padding-top: 12px;
-  border-top: 1px solid #dfe7f5;
+  border-top: 1px solid #d7e8e8;
   font-size: 11px;
-  color: #64748b;
+  color: #587184;
   text-align: center;
 }
 .no-print {
@@ -808,7 +810,7 @@ body {
   padding: 0 0 22px;
 }
 .no-print button {
-  background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+  background: linear-gradient(135deg, #0b7f83 0%, #086c70 100%);
   color: #fff;
   border: 0;
   border-radius: 999px;
@@ -816,7 +818,7 @@ body {
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 10px 18px rgba(124, 58, 237, 0.25);
+  box-shadow: 0 10px 18px rgba(11, 127, 131, 0.2);
 }
 @media print {
   body { background: #fff; }
@@ -1009,6 +1011,18 @@ body {
   font-size: 12px;
   line-height: 1.5;
 }
+.formulario-oido {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #d7e8e8;
+}
+.formulario-oido .metric + .metric { margin-top: 8px; }
+.formulario-oido .formulario-lista .lista {
+  margin: 0 0 12px;
+  padding-left: 18px;
+}
+.formulario-oido .formulario-lista .lista li { margin: 4px 0; }
+.formulario-oido .panel-header:not(:first-child) { margin-top: 12px; }
 @media (max-width: 520px) {
   .audiometria-grid { grid-template-columns: 1fr; }
   .audiometria-frecuencias { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1039,9 +1053,13 @@ def _formulario_oido_html(cuestionario: dict | None) -> str:
     }
     mapeo_factores = {
         "uso_audifonos_constante": "Uso de audífonos constante",
+        "tapón_de_cerumen_frecuentes_(tapones_de_cera)": "Tapones de cerumen frecuentes",
+        "tapon_de_cerumen_frecuentes_(tapones_de_cera)": "Tapones de cerumen frecuentes",
         "hipertension": "Hipertensión",
         "antecedentes_familiares_auditivos": "Antecedentes familiares con problemas auditivos",
         "otitis_frecuentes": "Otitis frecuentes",
+        "otitis_frecuentes_(infección)": "Otitis frecuentes",
+        "otitis_frecuentes_(infeccion)": "Otitis frecuentes",
         "traumatismo_craneal": "Traumatismo craneal",
         "quimioterapia_ototoxicos": "Quimioterapia (fármacos ototóxicos)",
         "diabetes": "Diabetes",
@@ -1061,11 +1079,19 @@ def _formulario_oido_html(cuestionario: dict | None) -> str:
         for f in (cuestionario.get("factores") or [])
     ]
 
-    if not problemas and not factores and not cuestionario.get("tiene_problema_auditivo") is not False:
+    if not problemas and not factores and "tiene_problema_auditivo" not in cuestionario:
         return ""
 
-    bloque_problemas = _lista_html(problemas, "• ") if problemas else "<p>No se registraron problemas auditivos.</p>"
-    bloque_factores = _lista_html(factores, "• ") if factores else "<p>No se registraron factores asociados.</p>"
+    bloque_problemas = (
+        _lista_html(problemas, "")
+        if problemas
+        else "<p>No se registraron problemas auditivos.</p>"
+    )
+    bloque_factores = (
+        _lista_html(factores, "")
+        if factores
+        else "<p>No se registraron factores asociados.</p>"
+    )
 
     respuesta = "Sí" if tiene_problema else "No"
     return (
@@ -1073,10 +1099,8 @@ def _formulario_oido_html(cuestionario: dict | None) -> str:
         '<div class="panel-header">Formulario</div>'
         '<div class="metric"><span class="metric-label">¿Presenta algún problema o inconveniente de audición?</span>'
         f'<span class="metric-value">{escape(respuesta)}</span></div>'
-        '<div class="metric"><span class="metric-label">Problemas auditivos marcados</span>'
-        f'<span class="metric-value">{escape(str(len(problemas)) if problemas else "0")}</span></div>'
-        f'<div class="panel-header">Problemas auditivos</div>{bloque_problemas}'
-        f'<div class="panel-header">Factores marcados</div>{bloque_factores}'
+        f'<div class="panel-header">Problemas auditivos</div><div class="formulario-lista">{bloque_problemas}</div>'
+        f'<div class="panel-header">Antecedentes y factores marcados</div><div class="formulario-lista">{bloque_factores}</div>'
         '</div>'
     )
 

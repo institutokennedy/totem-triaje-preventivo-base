@@ -1,72 +1,130 @@
 {% extends "base.html" %}
+{% set etapa_actual = 4 %}
 
 {% block title %}Módulo Oído{% endblock %}
 
 {% block content %}
 <style>
-  .modulo-oido fieldset { margin: 1rem 0; padding: .8rem 1rem; }
-  .modulo-oido legend { font-weight: 600; }
-  .modulo-oido label { display: block; margin: .35rem 0; cursor: pointer; }
-  .modulo-oido .respuesta-problema {
+  .modulo-oido { animation: arrive .25s ease-out both; }
+  .modulo-oido .oido-cabecera { max-width: 46rem; margin: 0 auto 1.3rem; }
+  .modulo-oido .oido-cabecera h1 { margin-bottom: .45rem; }
+  .modulo-oido .oido-cabecera > p:last-child { margin: 0; color: var(--muted); font-size: 1.05rem; }
+  .modulo-oido .oido-eyebrow {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 1rem;
-    margin-top: .5rem;
+    gap: .55rem;
+    margin: 0 0 .8rem;
+    color: var(--teal-dark);
+    font-size: .73rem;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
   }
+  .modulo-oido .oido-eyebrow::before { width: 1.25rem; height: 2px; background: #27aaa0; content: ""; }
+  .modulo-oido .oido-panel {
+    padding: clamp(1.1rem, 3vw, 1.7rem);
+    border: 1px solid var(--line);
+    border-radius: 1.1rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .modulo-oido .oido-panel > h2 { margin-top: 0; }
+  .modulo-oido fieldset {
+    margin: 1rem 0;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--line);
+    border-radius: .9rem;
+    background: #fbfdfd;
+  }
+  .modulo-oido legend { padding: 0 .25rem; font-weight: 750; }
+  .modulo-oido label { display: block; margin: .55rem 0; cursor: pointer; }
+  .modulo-oido input[type="checkbox"], .modulo-oido input[type="radio"] { width: 1.05rem; height: 1.05rem; accent-color: var(--teal); vertical-align: -.15rem; }
+  .modulo-oido .respuesta-problema { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; margin-top: .4rem; }
   .modulo-oido .respuesta-problema label {
     display: inline-flex;
     align-items: center;
-    gap: .5rem;
+    gap: .45rem;
     margin: 0;
+    padding: .55rem .8rem;
+    border: 1px solid var(--line);
+    border-radius: .7rem;
+    background: #fff;
   }
-  .modulo-oido .sub-opciones { margin: .5rem 0 0 1.5rem; }
-  .modulo-oido #txt-otro { margin-left: .5rem; }
-  .modulo-oido .instrucciones-pasos {
-    display: grid;
-    gap: .75rem;
-    margin: 1rem 0 1.5rem;
-    padding: 0;
-    list-style: none;
-  }
+  .modulo-oido .sub-opciones { margin: .65rem 0 0 .5rem; }
+  .modulo-oido #txt-otro { margin-left: .5rem; padding: .45rem .6rem; border: 1px solid #b9cdcf; border-radius: .5rem; }
+  .modulo-oido .instrucciones-pasos { display: grid; gap: .75rem; margin: 1rem 0 1.5rem; padding: 0; list-style: none; }
   .modulo-oido .instrucciones-pasos li {
     display: flex;
     align-items: center;
-    gap: 1.15rem;
+    gap: 1rem;
     margin: 0;
-    padding: .85rem 1rem;
+    padding: .8rem 1rem;
     border: 1px solid var(--line);
-    border-radius: 12px;
-    background: linear-gradient(110deg, #f8fbf9, #fff);
-    box-shadow: 0 5px 16px rgba(23, 51, 47, .035);
+    border-radius: .9rem;
+    background: #fff;
   }
   .modulo-oido .instrucciones-pasos img {
-    flex: 0 0 9rem;
-    width: 9rem;
-    height: 6.5rem;
-    padding: .15rem;
-    border: 1px solid #e0ebe6;
-    border-radius: 10px;
-    background: #f0f7f4;
+    flex: 0 0 8rem;
+    width: 8rem;
+    height: 5.4rem;
+    padding: .2rem;
+    border-radius: .7rem;
+    background: #eaf6f3;
     object-fit: contain;
   }
-  .modulo-oido .instrucciones-pasos span {
-    max-width: 62ch;
-    color: var(--ink);
-    line-height: 1.65;
-  }
+  .modulo-oido .instrucciones-pasos span { max-width: 62ch; line-height: 1.6; }
   .modulo-oido .instrucciones-pasos strong { color: var(--teal-dark); }
+  .modulo-oido .estimulo-actual {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .7rem;
+    margin: 1rem 0;
+  }
+  .modulo-oido .estimulo-actual p {
+    margin: 0;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: .8rem;
+    background: #f0f8f6;
+  }
+  .modulo-oido .acciones-respuesta button { min-width: 9rem; }
+  .modulo-oido #btn-no-escuche, .modulo-oido #btn-repetir {
+    border-color: #b7d4d7;
+    color: var(--ink);
+    background: #fff;
+  }
+  .modulo-oido #btn-no-escuche:hover:not(:disabled), .modulo-oido #btn-repetir:hover:not(:disabled) { background: #eff8f8; }
+  .modulo-oido table { width: 100%; margin-top: 1rem; border-collapse: collapse; }
+  .modulo-oido th, .modulo-oido td { padding: .75rem; border-bottom: 1px solid var(--line); text-align: left; }
+  .modulo-oido th { color: var(--muted); font-size: .82rem; }
+  .modulo-oido #oido-mensaje { min-height: 1.5rem; margin: 1rem 0 0; color: var(--teal-dark); }
+  .modulo-oido #oido-mensaje.error { color: var(--coral); }
+  .modulo-oido #aviso-volumen-reducido {
+    padding: .75rem 1rem;
+    border: 1px solid #f0d7a4;
+    border-radius: .75rem;
+    color: #72521e;
+    background: #fff7e6;
+  }
   @media (max-width: 560px) {
     .modulo-oido .instrucciones-pasos li { align-items: flex-start; gap: .7rem; padding: .65rem; }
     .modulo-oido .instrucciones-pasos img { flex-basis: 5rem; width: 5rem; height: 5rem; }
+    .modulo-oido .estimulo-actual { grid-template-columns: 1fr; }
+    .modulo-oido .acciones-respuesta button { flex: 1 1 100%; }
+    .modulo-oido th, .modulo-oido td { padding: .55rem .35rem; font-size: .82rem; }
   }
 </style>
 
 <section id="oido-modulo" class="modulo-oido" data-episodio-id="{{ episodio_id | default('') }}">
-  <h1>Evaluación auditiva</h1>
+  <header class="oido-cabecera">
+    <p class="oido-eyebrow">Evaluación auditiva · Prueba 1 de 6</p>
+    <h1>Prueba de oído</h1>
+    <p>La demostración usa tonos generados por el navegador. No equivale a una evaluación audiológica clínica.</p>
+  </header>
 
-  <div id="paso-formulario">
-    <h2>Completar el formulario</h2>
+  <div id="paso-formulario" class="oido-panel">
+    <h2>Antes de empezar, contanos un poco</h2>
+    <p>Esta información permite ajustar el volumen digital de los tonos. Si sentís molestia, detené la prueba.</p>
 
     <fieldset>
       <legend>¿Presenta algún problema o inconveniente de audición? (debe marcar si o si alguna)</legend>
@@ -99,9 +157,10 @@
     <fieldset>
       <legend>Marcar la que corresponde</legend>
       <label><input type="checkbox" name="factor" value="uso_audifonos_constante"> Uso de audífonos constante</label>
+      <label><input type="checkbox" name="factor" value="tapón_de_cerumen_frecuentes_(tapones_de_cera)"> Tapón de cerumen frecuentes (tapones de cera)</label>
       <label><input type="checkbox" name="factor" value="hipertension"> Hipertensión</label>
       <label><input type="checkbox" name="factor" value="antecedentes_familiares_auditivos"> Antecedentes familiares con problemas auditivos</label>
-      <label><input type="checkbox" name="factor" value="otitis_frecuentes"> Otitis frecuentes</label>
+      <label><input type="checkbox" name="factor" value="otitis_frecuentes_(infección)"> Otitis frecuentes (infección)</label>
       <label><input type="checkbox" name="factor" value="traumatismo_craneal"> Traumatismo craneal</label>
       <label><input type="checkbox" name="factor" value="quimioterapia_ototoxicos"> Quimioterapia (fármacos ototóxicos)</label>
       <label><input type="checkbox" name="factor" value="diabetes"> Diabetes</label>
@@ -111,8 +170,10 @@
     <button id="btn-continuar" type="button">Continuar</button>
   </div>
 
-  <div id="paso-instrucciones" hidden>
-    <h2>Instrucciones</h2>
+  <div id="paso-instrucciones" class="oido-panel" hidden>
+    <p class="oido-eyebrow">Preparación · Prueba de oído</p>
+    <h2>Antes de empezar, seguí estos pasos</h2>
+    <p>Leé las instrucciones y asegurate de estar en un lugar tranquilo.</p>
     <p id="aviso-volumen-reducido" role="status" aria-live="polite" hidden>
       Se reducirá automáticamente el volumen digital de los tonos por la respuesta del formulario.
       Esta reducción no garantiza un nivel seguro en todos los auriculares. Si siente molestia,
@@ -135,7 +196,9 @@
     <button id="btn-comenzar" type="button">Comenzar</button>
   </div>
 
-  <div id="paso-medicion" hidden>
+  <div id="paso-medicion" class="oido-panel" hidden>
+    <p class="oido-eyebrow">Prueba en curso · Escuchá y respondé</p>
+    <h2>¿De qué lado escuchaste el tono?</h2>
     <div class="estimulo-actual" aria-live="polite">
       <p>Frecuencia actual: <strong id="frecuencia-actual">—</strong> Hz</p>
       <p>Progreso: <span id="progreso-actual">0</span> / <span id="progreso-total">0</span></p>
@@ -150,8 +213,10 @@
 
   </div>
 
-  <div id="paso-resumen" hidden>
-    <h2>Resumen técnico de respuestas</h2>
+  <div id="paso-resumen" class="oido-panel" hidden>
+    <p class="oido-eyebrow">Resultado de demostración</p>
+    <h2>Revisá tus respuestas</h2>
+    <p>Podés repetir la prueba o confirmar para guardar el resultado en este episodio.</p>
     <table id="tabla-respuestas">
       <thead>
         <tr>

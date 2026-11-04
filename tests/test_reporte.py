@@ -252,11 +252,52 @@ def test_reporte_incluye_formulario_en_la_seccion_de_oido():
     assert "¿Presenta algún problema o inconveniente de audición?" in html
     assert "Hipoacusia" in html
     assert "Diabetes" in html
+    assert "Exposición a ruidos fuertes" in html
+    assert "Problemas auditivos marcados" not in html
+    assert html.count("Problemas auditivos</div>") == 1
+    assert "Antecedentes y factores marcados" in html
     assert html.count("Formulario") == 1
     assert html.count("Grupo 6 · Oído") == 1
     assert html.index("Grupo 6 · Oído") < html.index("Formulario")
+    form_index = html.index('<div class="formulario-oido">')
+    hearing_panel_start = html.rfind('<section class="panel">', 0, form_index)
+    hearing_panel_end = html.index("</section>", form_index)
+    assert html.index("Grupo 6 · Oído") > hearing_panel_start
+    assert hearing_panel_end > form_index
     assert html.index("Formulario") < html.index("Resultado preventivo general")
     assert html.index("Resultado preventivo general") < html.index("Observaciones / alertas")
+
+
+def test_reporte_muestra_respuesta_negativa_aunque_no_haya_factores_marcados():
+    paciente = SimpleNamespace(
+        nombre="Paciente",
+        apellido="Ficticio",
+        fecha_nacimiento=None,
+        email=None,
+    )
+    reporte = construir_reporte(
+        paciente,
+        {
+            "oido": [
+                {
+                    "data": {
+                        "cuestionario": {
+                            "tiene_problema_auditivo": False,
+                            "problemas_auditivos": [],
+                            "otro_problema": "",
+                            "factores": [],
+                        }
+                    }
+                }
+            ]
+        },
+        [],
+    )
+
+    html = render_html(reporte)
+    assert "Formulario" in html
+    assert '<span class="metric-value">No</span>' in html
+    assert "No se registraron factores asociados." in html
 
 
 def test_reporte_no_marca_como_escucha_si_responde_lado_equivocado():
