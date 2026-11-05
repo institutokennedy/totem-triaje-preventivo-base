@@ -1,54 +1,234 @@
 {% extends "base.html" %}
 
-{% block title %}Módulo de Glucemia — Control por Teclado{% endblock %}
+{% block title %}Módulo de Glucemia — Triaje Preventivo{% endblock %}
 
 {% block content %}
 <style>
-    /* Estilos visuales de alto contraste y foco para navegación por teclado */
+    body {
+        background: linear-gradient(135deg, #ebfaf6 0%, #dfeef2 38%, #eef7ff 100%);
+        font-family: "Segoe UI", "Trebuchet MS", Arial, sans-serif;
+    }
+
+    .glucemia-shell {
+        position: relative;
+        min-height: calc(100vh - 2rem);
+        padding: 2.5rem 0;
+        overflow: hidden;
+    }nepe
+
+    .glucemia-shell::before,
+    .glucemia-shell::after {
+        content: "";
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(10px);
+        opacity: 0.75;
+    }
+
+    .glucemia-shell::before {
+        width: 26rem;
+        height: 26rem;
+        right: -8rem;
+        top: -4rem;
+        background: rgba(122, 212, 196, 0.22);
+    }nepe
+
+    .glucemia-shell::after {
+        width: 20rem;
+        height: 20rem;
+        left: -4rem;
+        bottom: -5rem;
+        background: rgba(157, 201, 255, 0.24);
+    }
+
+    .glucemia-art {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    .device-hero {
+        position: absolute;
+        right: 10%;
+        top: 9%;
+        width: 230px;
+        height: 280px;
+        background: rgba(255, 255, 255, 0.4);
+        border: 2px solid rgba(122, 176, 163, 0.45);
+        border-radius: 30px;
+        box-shadow: 0 28px 42px rgba(52, 94, 89, 0.12);
+    }
+
+    .device-hero .screen {
+        position: absolute;
+        inset: 20px 22px 35px;
+        border-radius: 25px;
+        background: linear-gradient(180deg, #edfdf8 0%, #d8f0ea 100%);
+        border: 2px solid rgba(125, 151, 146, 0.15);
+    }
+
+    .device-hero .screen::before {
+        content: "";
+        position: absolute;
+        width: 58px;
+        height: 58px;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -52%);
+        border-radius: 18px;
+        background: rgba(255,255,255,0.7);
+        box-shadow: inset 0 0 0 1px rgba(84, 130, 118, 0.18);
+    }nepe
+
+    .device-hero .screen::after {
+        content: "";
+        position: absolute;
+        width: 110px;
+        height: 10px;
+        left: 50%;
+        bottom: 18px;
+        transform: translateX(-50%);
+        border-radius: 999px;
+        background: rgba(136, 174, 161, 0.8);
+    }
+
+    .plus-badge {
+        position: absolute;
+        right: 11%;
+        top: 32%;
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #54c7ac, #8ed0ff);
+        box-shadow: 0 18px 26px rgba(79, 155, 140, 0.2);
+    }
+
+    .plus-badge::before,
+    .plus-badge::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        border-radius: 999px;
+        background: rgba(255,255,255,0.96);
+    }
+
+    .plus-badge::before {
+        width: 38px;
+        height: 8px;
+    }
+
+    .plus-badge::after {
+        width: 8px;
+        height: 38px;
+    }
+
+    .glucemia-card {
+        position: relative;
+        z-index: 1;
+        background: rgba(255, 255, 255, 0.78);
+        border: 1px solid rgba(145, 177, 166, 0.26);
+        border-radius: 28px;
+        box-shadow: 0 24px 58px rgba(52, 83, 90, 0.12) !important;
+        backdrop-filter: blur(4px);
+    }
+
+    .glucemia-header {
+        letter-spacing: 0.02em;
+    }
+
+    .glucemia-header h2 {
+        color: #1d3e46;
+        font-weight: 800;
+        font-size: clamp(2rem, 0.9rem + 1.8vw, 2.9rem);
+        margin: 0;nepe
+        text-shadow: 0 1px 0 rgba(255,255,255,0.9);
+    }
+
+    .glucemia-subtitle {
+        color: #4d6d7a;
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    /* Estilos de accesibilidad y resaltado para control por teclado */
     .tecla-badge {
-        background-color: #212529;
+        background: linear-gradient(135deg, #2c3d4e, #1d2d3a);
         color: #ffffff;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-family: monospace;
-        font-weight: bold;
-        font-size: 0.9rem;
-    }
-    
-    .opcion-teclado {
-        border: 2px solid #dee2e6;
+        padding: 4px 10px;
         border-radius: 8px;
-        padding: 15px;
+        font-family: "Consolas", "SFMono-Regular", monospace;
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+    }
+    .opcion-teclado {
+        border: 2px solid rgba(117, 164, 151, 0.28);
+        border-radius: 18px;
+        padding: 15px 18px;
         cursor: pointer;
-        transition: all 0.2s ease-in-out;
+        transition: all 0.25s ease-in-out;
+        background: rgba(255,255,255,0.7);
+        color: #1f2f36;nepenepe
+        font-weight: 600;
+        box-shadow: 0 10px 18px rgba(72, 98, 109, 0.05);
     }
-
-    .opcion-teclado.activa-foco {
-        border-color: #0d6efd;
-        background-color: #e7f1ff;
-        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
-        font-weight: bold;
+    .opcion-teclado:hover {
+        transform: translateY(-1px);
+        border-color: rgba(63, 160, 137, 0.45);
     }
-
-    .btn-teclado:focus, .btn-teclado.foco-teclado {
-        outline: 4px solid #ffc107 !important;
-        box-shadow: 0 0 10px rgba(255, 193, 7, 0.8) !important;
+    .opcion-teclado.activa-foco, .opcion-teclado:focus {
+        border-color: #2aa387 !important;
+        background: linear-gradient(135deg, #ebfff8, #dff6f1) !important;
+        font-weight: 800;
+        outline: none;
+        box-shadow: 0 0 0 0.25rem rgba(42, 163, 135, 0.18), 0 12px 20px rgba(62,118,106,0.08);
     }
-</style>
+    .btn-teclado:focus, .foco-teclado:focus {
+        outline: 4px solid rgba(255, 202, 70, 0.9) !important;
+        box-shadow: 0 0 0 0.3rem rgba(255, 202, 70, 0.25), 0 0 12px rgba(255, 202, 70, 0.55) !important;
+    }
+    .alert-info {
+        background: linear-gradient(135deg, rgba(221, 242, 255, 0.9), rgba(235,248,255,0.8));
+        border-color: rgba(123, 170, 206, 0.25);
+        color: #1d4f66;
+    }
+    .alert-dark {
+        background: linear-gradient(135deg, #243847, #1a2d3c);
+        border-color: rgba(160, 182, 196, 0.2);
+    }
+    .btn-primary {
+        background: linear-gradient(135deg, #1ea4d8, #2c6bd8);
+        border-color: #1ea4d8;
+    }
+</style>nepe
 
-<div class="container my-4">
-    <div class="card shadow-lg p-4">
-        <!-- Encabezado con ayuda de teclado -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h2>Módulo de Glucemia</h2>
+<div class="glucemia-shell">
+    <div class="glucemia-art" aria-hidden="true">
+        <div class="device-hero">
+            <div class="screen"></div>
+        </div>
+        <div class="plus-badge"></div>
+    </div>
+
+    <div class="container my-4">
+        <div class="card glucemia-card shadow-lg p-4">
+        <!-- ENCABEZADO Y ATRIBUTOS DE ATENCIÓN -->
+        <div class="glucemia-header d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h2 class="mb-0">Módulo de Glucemia</h2>
+                <div class="glucemia-subtitle">Monitoreo clínico y medición asistida</div>
+            </div>
             <div class="text-end">
-                <span class="badge bg-secondary p-2">
+                <span class="badge bg-secondary p-2 fs-6">
                     Episodio N°: <strong id="episodio-id-display">--</strong>
                 </span>
             </div>
         </div>
 
-        <!-- Barra inferior fija de atajos de teclado -->
+        <!-- BARRA INFERIOR DE ATAJOS DE TECLADO -->
         <div class="alert alert-dark d-flex align-items-center justify-content-around py-2 mb-4">
             <span><span class="tecla-badge">↑ / ↓</span> Navegar opciones</span>
             <span><span class="tecla-badge">ENTER / ESPACIO</span> Seleccionar</span>
@@ -60,13 +240,13 @@
         <div id="estado-instrucciones" class="estado-seccion">
             <div class="alert alert-info">
                 <h4>Instrucciones del Módulo</h4>
-                <p class="mb-1">Utilice las <strong>flechas arriba/abajo</strong> del teclado para seleccionar el origen de la medición y presione <strong>ENTER</strong> para comenzar.</p>
+                <p class="mb-1">Utilice las <strong>flechas arriba/abajo</strong> o las teclas <strong>1 / 2</strong> para seleccionar el origen de la medición y presione <strong>ENTER</strong> para comenzar.</p>
             </div>
 
             <h5 class="mt-4 mb-3">Seleccione el origen de la lectura:</h5>
             <div class="row g-3 mb-4">
                 <div class="col-md-6">
-                    <div id="opcion-sensor" class="opcion-teclado activa-foco" tabindex="0" data-origen="SENSOR">
+                    <div id="opcion-sensor" class="opcion-teclado activa-foco" tabindex="0" data-origen="SENSOR" onclick="seleccionarOrigen('SENSOR')">
                         <div class="d-flex justify-content-between align-items-center">
                             <span>1. Sensor Físico (ESP32 / Fotodiodo)</span>
                             <span class="tecla-badge">Opción 1</span>
@@ -74,7 +254,7 @@
                     </div>
                 </div>
                 <div class="col-md-6">
-                    <div id="opcion-simulador" class="opcion-teclado" tabindex="0" data-origen="SIMULADOR">
+                    <div id="opcion-simulador" class="opcion-teclado" tabindex="0" data-origen="SIMULADOR" onclick="seleccionarOrigen('SIMULADOR')">
                         <div class="d-flex justify-content-between align-items-center">
                             <span>2. Simulador por Software</span>
                             <span class="tecla-badge">Opción 2</span>
@@ -102,6 +282,14 @@
                 <div class="display-3 fw-bold text-dark my-2">
                     <span id="res-valor">--</span> <span id="res-unidad" class="fs-3 text-muted"></span>
                 </div>
+                
+                <!-- Nivel estimado pedagógico (Solo para demostración técnico-escolar) -->
+                <div class="mt-2 mb-3">
+                    <span class="fs-6 text-muted">Nivel estimado (Demostración): </span>
+                    <span id="res-nivel-etiqueta" class="badge fs-6 bg-secondary">--</span>
+                </div>
+
+                <hr>
                 <p class="mb-1 fs-5"><strong>Método:</strong> <span id="res-metodo">--</span></p>
                 <p class="mb-0 text-muted"><strong>Origen:</strong> <span id="res-origen">--</span></p>
             </div>
@@ -127,7 +315,7 @@
                 <p id="error-mensaje" class="fs-5 mb-0"></p>
             </div>
             <button id="btn-reintentar-error" class="btn btn-secondary btn-lg w-100 btn-teclado" tabindex="0">
-                [ENTER] Volver al Inicio
+                [ENTER] Volver a Intentar
             </button>
         </div>
 
@@ -135,7 +323,7 @@
         <div id="estado-confirmado" class="estado-seccion text-center py-4" style="display: none;">
             <div class="alert alert-success p-4">
                 <h3>¡Resultado Confirmado!</h3>
-                <p class="fs-5 mb-0">La medición se ha persistido correctamente en la tabla ResultadoModulo.</p>
+                <p class="fs-5 mb-0">La medición se ha persistido correctamente en la tabla ResultadoModulo de SQLite.</p>
             </div>
             <a id="btn-continuar-panel" class="btn btn-primary btn-lg w-100 btn-teclado" tabindex="0" href="/episodio">
                 [ENTER] Volver al Panel del Episodio
@@ -144,40 +332,38 @@
     </div>
 </div>
 
+<!-- LÓGICA JAVASCRIPT DE INTEGRACIÓN DE API Y NAVEGACIÓN -->
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Obtención del episodio activo
+    // 1. Obtener episodio_id desde la URL (?episodio_id=X) o localStorage
     const urlParams = new URLSearchParams(window.location.search);
     const episodioId = parseInt(urlParams.get('episodio_id') || localStorage.getItem('episodio_id') || '1');
     document.getElementById('episodio-id-display').textContent = episodioId;
 
-    // Referencias de los 5 estados
+    // Referencias al DOM de los 5 estados
     const secInstrucciones = document.getElementById('estado-instrucciones');
     const secMidiendo = document.getElementById('estado-midiendo');
     const secResultado = document.getElementById('estado-resultado');
     const secError = document.getElementById('estado-error');
     const secConfirmado = document.getElementById('estado-confirmado');
 
-    // Elementos interactivos
-    const opcionSensor = document.getElementById('opcion-sensor');
-    const opcionSimulador = document.getElementById('opcion-simulador');
     const btnComenzar = document.getElementById('btn-comenzar');
     const btnConfirmar = document.getElementById('btn-confirmar');
     const btnRepetir = document.getElementById('btn-repetir');
-    const btnReintentarError = document.getElementById('btn-reintentar-error');
+    const btnReintentar = document.getElementById('btn-reintentar-error');
 
-    let estadoActual = 'INSTRUCCIONES'; // INSTRUCCIONES, MIDIENDO, RESULTADO, ERROR, CONFIRMADO
+    const opcionSensor = document.getElementById('opcion-sensor');
+    const opcionSimulador = document.getElementById('opcion-simulador');
+
+    let estadoActual = 'INSTRUCCIONES';
     let origenSeleccionado = 'SENSOR';
     let medicionTemporal = null;
-    const DISPOSITIVO_ID = 1; // ID registrado en SQLite para GLU-001
+    const DISPOSITIVO_ID = 1; // ID registrado en SQLite para el dispositivo GLU-001
 
+    // Transición entre los 5 estados visuales estándar
     function cambiarEstado(nuevoEstado) {
         estadoActual = nuevoEstado;
-        secInstrucciones.style.display = 'none';
-        secMidiendo.style.display = 'none';
-        secResultado.style.display = 'none';
-        secError.style.display = 'none';
-        secConfirmado.style.display = 'none';
+        [secInstrucciones, secMidiendo, secResultado, secError, secConfirmado].forEach(s => s.style.display = 'none');
 
         if (nuevoEstado === 'INSTRUCCIONES') {
             secInstrucciones.style.display = 'block';
@@ -189,72 +375,53 @@ document.addEventListener('DOMContentLoaded', () => {
             btnConfirmar.focus();
         } else if (nuevoEstado === 'ERROR') {
             secError.style.display = 'block';
-            btnReintentarError.focus();
+            btnReintentar.focus();
         } else if (nuevoEstado === 'CONFIRMADO') {
             secConfirmado.style.display = 'block';
             document.getElementById('btn-continuar-panel').focus();
         }
     }
 
-    function seleccionarOrigen(origen) {
+    // Selección de origen (Sensor vs Simulador)
+    window.seleccionarOrigen = function(origen) {
         origenSeleccionado = origen;
-        if (origen === 'SENSOR') {
-            opcionSensor.classList.add('activa-foco');
-            opcionSimulador.classList.remove('activa-foco');
-        } else {
-            opcionSimulador.classList.add('activa-foco');
-            opcionSensor.classList.remove('activa-foco');
-        }
-    }
+        opcionSensor.classList.toggle('activa-foco', origen === 'SENSOR');
+        opcionSimulador.classList.toggle('activa-foco', origen === 'SIMULADOR');
+    };
 
-    // --- MANEJO CENTRALIZADO DEL TECLADO ---
+    // Control de navegación por teclado físico
     document.addEventListener('keydown', (e) => {
-        // Atajo directo para seleccionar número 1 o 2 en Instrucciones
         if (estadoActual === 'INSTRUCCIONES') {
             if (e.key === '1') seleccionarOrigen('SENSOR');
             if (e.key === '2') seleccionarOrigen('SIMULADOR');
-
-            if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-                seleccionarOrigen('SENSOR');
-            } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-                seleccionarOrigen('SIMULADOR');
-            } else if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                ejecutarMedicion();
+            if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') seleccionarOrigen('SENSOR');
+            if (e.key === 'ArrowDown' || e.key === 'ArrowRight') seleccionarOrigen('SIMULADOR');
+            if (e.key === 'Enter' || e.key === ' ') { 
+                e.preventDefault(); 
+                iniciarSensado(); 
             }
-        } 
-        else if (estadoActual === 'RESULTADO') {
-            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-                if (document.activeElement === btnConfirmar) {
-                    btnRepetir.focus();
-                } else {
-                    btnConfirmar.focus();
-                }
-            } else if (e.key.toLowerCase() === 'c') {
-                confirmarMedicion();
-            } else if (e.key.toLowerCase() === 'r') {
-                repetirMedicion();
-            }
-        }
-        else if (estadoActual === 'ERROR') {
-            if (e.key === 'Enter' || e.key === ' ' || e.key.toLowerCase() === 'r') {
-                cambiarEstado('INSTRUCCIONES');
-            }
+        } else if (estadoActual === 'RESULTADO') {
+            if (e.key.toLowerCase() === 'c') confirmarMedicion();
+            if (e.key.toLowerCase() === 'r') repetirMedicion();
+        } else if (estadoActual === 'ERROR' && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            cambiarEstado('INSTRUCCIONES');
         }
     });
 
-    // Acción de inicio de medición
-    async function ejecutarMedicion() {
+    // Proceso de lectura (Consulta GET a la API o Simulación por Software)
+    async function iniciarSensado() {
         cambiarEstado('MIDIENDO');
 
         if (origenSeleccionado === 'SIMULADOR') {
+            // Generación ficticia de prueba por software
             setTimeout(() => {
                 medicionTemporal = {
                     episodio_id: episodioId,
                     dispositivo_id: DISPOSITIVO_ID,
                     origen: "SIMULADOR",
                     data: {
-                        valor: parseFloat((Math.random() * (130 - 70) + 70).toFixed(1)),
+                        valor: parseFloat((Math.random() * (135.0 - 75.0) + 75.0).toFixed(1)),
                         unidad: "mg/dL",
                         metodo: "SIMULADO"
                     }
@@ -262,77 +429,106 @@ document.addEventListener('DOMContentLoaded', () => {
                 mostrarResultado(medicionTemporal);
             }, 1200);
         } else {
+            // Modo SENSOR: Consulta el endpoint de Python para traer lo transmitido por la ESP32
             try {
-                const res = await fetch(`/api/v1/glucemia/resultados/${episodioId}`);
+                let res = await fetch(`/api/v1/demo-ambiente/resultados/${episodioId}`);
+                if (!res.ok) {
+                    res = await fetch(`/api/v1/glucemia/resultados/${episodioId}`);
+                }
+
                 if (res.ok) {
-                    const lista = await res.json();
-                    if (lista.length > 0) {
-                        const ultima = lista[lista.length - 1];
+                    const datos = await res.json();
+                    if (datos && datos.length > 0) {
+                        const ultimo = datos[datos.length - 1];
                         medicionTemporal = {
                             episodio_id: episodioId,
                             dispositivo_id: DISPOSITIVO_ID,
                             origen: "SENSOR",
-                            data: ultima.data
+                            data: ultimo.data
                         };
                         mostrarResultado(medicionTemporal);
                     } else {
-                        mostrarError("No hay mediciones enviadas por la ESP32 para este episodio.");
+                        mostrarError("No se encontró ninguna lectura enviada por la ESP32. Coloque el dedo sobre el fotodiodo y vuelva a intentar.");
                     }
                 } else {
-                    mostrarError("Error al consultar la API.");
+                    mostrarError("Error al comunicarse con la API de Python en la computadora.");
                 }
             } catch (err) {
-                mostrarError("Falla de conexión con el backend.");
+                mostrarError("Falla de red local al consultar el servidor FastAPI.");
             }
         }
     }
 
+    // Renderizar datos en el Estado 3 (RESULTADO)
     function mostrarResultado(medicion) {
-        document.getElementById('res-valor').textContent = medicion.data.valor;
+        const valor = parseFloat(medicion.data.valor);
+        document.getElementById('res-valor').textContent = valor;
         document.getElementById('res-unidad').textContent = medicion.data.unidad;
         document.getElementById('res-metodo').textContent = medicion.data.metodo;
         document.getElementById('res-origen').textContent = medicion.origen;
+
+        // Regla pedagógica no clínica para evaluación visual en la escuela
+        const etiqueta = document.getElementById('res-nivel-etiqueta');
+        if (valor < 70.0) {
+            etiqueta.textContent = "BAJA";
+            etiqueta.className = "badge fs-6 bg-warning text-dark";
+        } else if (valor >= 70.0 && valor <= 130.0) {
+            etiqueta.textContent = "MEDIA / NORMAL";
+            etiqueta.className = "badge fs-6 bg-success";
+        } else {
+            etiqueta.textContent = "ALTA";
+            etiqueta.className = "badge fs-6 bg-danger";
+        }
+
         cambiarEstado('RESULTADO');
     }
 
-    function mostrarError(mensaje) {
-        document.getElementById('error-mensaje').textContent = mensaje;
+    function mostrarError(msg) {
+        document.getElementById('error-titulo').textContent = "Atención / Falla Técnica";
+        document.getElementById('error-mensaje').textContent = msg;
         cambiarEstado('ERROR');
     }
 
+    // Acción Repetir: Descarte local sin tocar SQLite
     function repetirMedicion() {
         medicionTemporal = null;
         cambiarEstado('INSTRUCCIONES');
     }
 
+    // Acción Confirmar: Guardado en SQLite por HTTP POST
     async function confirmarMedicion() {
         if (!medicionTemporal) return;
-
         try {
-            const res = await fetch('/api/v1/glucemia/resultados', {
+            let res = await fetch('/api/v1/demo-ambiente/resultados', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(medicionTemporal)
             });
 
+            if (!res.ok) {
+                res = await fetch('/api/v1/glucemia/resultados', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(medicionTemporal)
+                });
+            }
+
             if (res.ok) {
                 cambiarEstado('CONFIRMADO');
             } else {
                 const err = await res.json();
-                mostrarError(`Error API ${res.status}: ${err.detail || 'Rechazado'}`);
+                mostrarError(`Error al guardar (${res.status}): ${err.detail || 'Operación rechazada'}`);
             }
         } catch (err) {
-            mostrarError("Falla de red al intentar guardar.");
+            mostrarError("Falla de conexión al intentar persistir el resultado en la base de datos.");
         }
     }
 
-    // Eventos de ratón por si también se hace clic
-    btnComenzar.addEventListener('click', ejecutarMedicion);
+    // Eventos de botones
+    btnComenzar.addEventListener('click', iniciarSensado);
     btnConfirmar.addEventListener('click', confirmarMedicion);
     btnRepetir.addEventListener('click', repetirMedicion);
-    btnReintentarError.addEventListener('click', () => cambiarEstado('INSTRUCCIONES'));
-    opcionSensor.addEventListener('click', () => seleccionarOrigen('SENSOR'));
-    opcionSimulador.addEventListener('click', () => seleccionarOrigen('SIMULADOR'));
+    btnReintentar.addEventListener('click', () => cambiarEstado('INSTRUCCIONES'));
 });
 </script>
 {% endblock %}

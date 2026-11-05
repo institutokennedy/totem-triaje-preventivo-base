@@ -3,50 +3,260 @@
 {% block title %}Consentimiento Informado{% endblock %}
 
 {% block content %}
-<div class="container my-4">
-    <div class="card shadow-sm p-4">
-        <h2 class="mb-3">Consentimiento Informado para Atención de Triaje</h2>
-        <p class="text-muted">Episodio N°: <strong id="episodio-id-display">--</strong></p>
+<style>
+    body {
+        background: linear-gradient(135deg, #edf9f4 0%, #e4f5f0 35%, #edf7ff 100%);
+        font-family: "Segoe UI", "Trebuchet MS", Arial, sans-serif;
+    }
 
-        <!-- 1. Texto de la Versión Vigente del Consentimiento -->
-        <div class="card bg-light mb-4">
-            <div class="card-body" style="max-height: 250px; overflow-y: auto;">
-                <h5>Términos y Condiciones (Versión v1.0)</h5>
-                <p>
-                    Por medio de la presente, declaro haber sido informado/a adecuadamente sobre el procedimiento de 
-                    triaje preventivo, el cual abarca la evaluación y captura técnica de parámetros de salud 
-                    (tales como signos vitales, glucemia, evaluaciones de cavidad oral, vista u oído según el circuito).
-                </p>
-                <p>
-                    Comprendo que las mediciones realizadas son de carácter técnico y orientativo para establecer la 
-                    prioridad de atención en el establecimiento de salud, y no reemplazan una consulta o diagnóstico médico formal.
-                </p>
-                <p>
-                    Autorizo el almacenamiento seguro de los datos generados durante este episodio de atención para su 
-                    procesamiento funcional e integración en el informe final.
-                </p>
-            </div>
+    .consent-shell {
+        position: relative;
+        min-height: calc(100vh - 2rem);
+        padding: 2.5rem 0;
+        overflow: hidden;
+    }
+
+    .consent-shell::before,
+    .consent-shell::after {
+        content: "";
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(8px);
+        opacity: 0.7;
+    }
+
+    .consent-shell::before {
+        width: 28rem;
+        height: 28rem;
+        background: rgba(123, 211, 186, 0.2);
+        right: -7rem;
+        top: -5rem;
+    }
+
+    .consent-shell::after {
+        width: 22rem;
+        height: 22rem;
+        background: rgba(157, 206, 255, 0.22);
+        left: -4rem;
+        bottom: -5rem;
+    }
+
+    .consent-illustration {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    .device-card {
+        position: absolute;
+        right: 11%;
+        top: 8%;
+        width: 220px;
+        height: 270px;
+        background: rgba(255,255,255,0.38);
+        border: 2px solid rgba(120,170,157,0.5);
+        border-radius: 30px;
+        box-shadow: 0 30px 45px rgba(58, 103, 92, 0.12);
+    }
+
+    .device-card .screen {
+        position: absolute;
+        inset: 18px 20px 40px;
+        border-radius: 22px;
+        background: linear-gradient(180deg, #ecfbf5 0%, #d9efe6 100%);
+        border: 2px solid rgba(110, 159, 142, 0.16);
+    }
+
+    .device-card .screen::before {
+        content: "";
+        position: absolute;
+        width: 50px;
+        height: 50px;
+        background: rgba(255,255,255,0.75);
+        border-radius: 14px;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        box-shadow: inset 0 0 0 1px rgba(72, 114, 101, 0.18);
+    }
+
+    .device-card .screen::after {
+        content: "";
+        position: absolute;
+        width: 105px;
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(128, 170, 156, 0.8);
+        left: 50%;
+        bottom: 20px;
+        transform: translateX(-50%);
+    }
+
+    .plus-sign {
+        position: absolute;
+        right: 12%;
+        top: 28%;
+        width: 76px;
+        height: 76px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #4fc2a3, #7ec9ff);
+        box-shadow: 0 16px 22px rgba(57, 141, 111, 0.18);
+    }
+
+    .plus-sign::before,
+    .plus-sign::after {
+        content: "";
+        position: absolute;
+        background: rgba(255,255,255,0.95);
+        border-radius: 999px;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+    }
+
+    .plus-sign::before {
+        width: 40px;
+        height: 8px;
+    }
+
+    .plus-sign::after {
+        width: 8px;
+        height: 40px;
+    }
+
+    .consent-card {
+        position: relative;
+        z-index: 1;
+        background: rgba(255,255,255,0.8);
+        backdrop-filter: blur(4px);
+        border: 1px solid rgba(154, 183, 170, 0.24);
+        border-radius: 28px;
+        box-shadow: 0 24px 50px rgba(54, 85, 89, 0.12);
+    }
+
+    .consent-title {
+        color: #1a3d43;
+        font-weight: 800;
+        font-size: clamp(2rem, 1.8rem + 0.8vw, 2.8rem);
+        margin-bottom: 0.35rem;
+    }
+
+    .consent-episode {
+        color: #426a77;
+        font-weight: 600;
+        font-size: 1.05rem;
+    }
+
+    .consent-panel {
+        background: linear-gradient(135deg, rgba(245, 252, 249, 0.92), rgba(240, 246, 255, 0.88));
+        border: 1px solid rgba(151, 185, 175, 0.28);
+        border-radius: 18px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    }
+
+    .consent-panel .card-body {
+        max-height: 250px;
+        overflow-y: auto;
+        color: #25495a;
+        line-height: 1.7;
+    }
+
+    .consent-panel h5 {
+        color: #1f4a54;
+        font-weight: 800;
+        margin-bottom: 1rem;
+    }
+
+    .form-control {
+        border-radius: 12px;
+        border: 1px solid rgba(119, 160, 150, 0.35);
+        padding: 0.8rem 1rem;
+        box-shadow: inset 0 1px 2px rgba(15, 42, 53, 0.02);
+    }
+
+    .form-label {
+        color: #245367;
+        font-weight: 700;
+        margin-bottom: 0.6rem;
+    }
+
+    .btn-action {
+        border-radius: 14px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        padding: 0.9rem 1.4rem;
+        box-shadow: 0 12px 18px rgba(33, 85, 96, 0.12);
+    }
+
+    .btn-success {
+        background: linear-gradient(135deg, #2bb67b, #34c38f);
+        border-color: #2bb67b;
+    }
+
+    .btn-outline-danger {
+        background: rgba(255, 255, 255, 0.72);
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #1f99d5, #2a6ac8);
+        border-color: #1f99d5;
+    }
+</style>
+
+<div class="consent-shell">
+    <div class="consent-illustration" aria-hidden="true">
+        <div class="device-card">
+            <div class="screen"></div>
         </div>
+        <div class="plus-sign"></div>
+    </div>
 
-        <!-- 2. Formulario de Selección (Aceptar / Rechazar) -->
-        <div id="seccion-decision">
-            <div class="mb-3">
-                <label for="observacion" class="form-label">Observaciones adicionales (Opcional):</label>
-                <input type="text" id="observacion" class="form-control" placeholder="Ingrese alguna aclaración u observación si corresponde">
+    <div class="container my-4">
+        <div class="card consent-card shadow-sm p-4">
+            <h2 class="consent-title">Consentimiento Informado para Atención de Triaje</h2>
+            <p class="consent-episode">Episodio N°: <strong id="episodio-id-display">--</strong></p>
+
+            <!-- 1. Texto de la Versión Vigente del Consentimiento -->
+            <div class="card consent-panel mb-4">
+                <div class="card-body" style="max-height: 250px; overflow-y: auto;">
+                    <h5>Términos y Condiciones (Versión v1.0)</h5>
+                    <p>
+                        Por medio de la presente, declaro haber sido informado/a adecuadamente sobre el procedimiento de 
+                        triaje preventivo, el cual abarca la evaluación y captura técnica de parámetros de salud 
+                        (tales como signos vitales, glucemia, evaluaciones de cavidad oral, vista u oído según el circuito).
+                    </p>
+                    <p>
+                        Comprendo que las mediciones realizadas son de carácter técnico y orientativo para establecer la 
+                        prioridad de atención en el establecimiento de salud, y no reemplazan una consulta o diagnóstico médico formal.
+                    </p>
+                    <p>
+                        Autorizo el almacenamiento seguro de los datos generados durante este episodio de atención para su 
+                        procesamiento funcional e integración en el informe final.
+                    </p>
+                </div>
             </div>
 
-            <div class="d-flex gap-3">
-                <button id="btn-aceptar" class="btn btn-success btn-lg">Aceptar Consentimiento</button>
-                <button id="btn-rechazar" class="btn btn-outline-danger btn-lg">Rechazar Consentimiento</button>
+            <!-- 2. Formulario de Selección (Aceptar / Rechazar) -->
+            <div id="seccion-decision">
+                <div class="mb-3">
+                    <label for="observacion" class="form-label">Observaciones adicionales (Opcional):</label>
+                    <input type="text" id="observacion" class="form-control" placeholder="Ingrese alguna aclaración u observación si corresponde">
+                </div>
+
+                <div class="d-flex gap-3 flex-wrap">
+                    <button id="btn-aceptar" class="btn btn-success btn-lg btn-action">Aceptar Consentimiento</button>
+                    <button id="btn-rechazar" class="btn btn-outline-danger btn-lg btn-action">Rechazar Consentimiento</button>
+                </div>
             </div>
-        </div>
 
-        <!-- 3. Mensaje de Estado (Habilitación o Bloqueo) -->
-        <div id="mensaje-estado" class="mt-4" style="display: none;"></div>
+            <!-- 3. Mensaje de Estado (Habilitación o Bloqueo) -->
+            <div id="mensaje-estado" class="mt-4" style="display: none;"></div>
 
-        <!-- 4. Botón de Continuidad al Panel -->
-        <div id="seccion-navegacion" class="mt-4" style="display: none;">
-            <button id="btn-continuar-panel" class="btn btn-primary btn-lg">Continuar al Panel del Episodio</button>
+            <!-- 4. Botón de Continuidad al Panel -->
+            <div id="seccion-navegacion" class="mt-4" style="display: none;">
+                <button id="btn-continuar-panel" class="btn btn-primary btn-lg btn-action">Continuar al Panel del Episodio</button>
+            </div>
         </div>
     </div>
 </div>
