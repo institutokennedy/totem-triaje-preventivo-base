@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3faf9">
+  <title>{% block title %}Tótem Preventivo{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=1">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  {% set etapa_actual = etapa_actual | default(1) %}
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Tótem Preventivo, inicio">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" focusable="false">
+          <path d="M16 26s-10-6.1-10-13a5.6 5.6 0 0 1 10-3.4A5.6 5.6 0 0 1 26 13c0 6.9-10 13-10 13Z"/>
+          <path d="M8.5 16h4l2-3.5 3.2 7 2-3.5h3.8"/>
+        </svg>
+      </span>
+      <span>
+        <span class="brand-name">Tótem Preventivo</span>
+        <span class="brand-caption">Guía de pruebas preventivas</span>
+      </span>
+    </a>
+    <div class="topbar-actions">
+      <span class="demo-badge"><span aria-hidden="true"></span> Circuito educativo</span>
+      <button class="utility-button" id="toggle-text-size" type="button" aria-pressed="false">A + <span>Letra grande</span></button>
+      <button class="utility-button" id="open-help" type="button" aria-haspopup="dialog">ⓘ <span>Ayuda</span></button>
+    </div>
+  </header>
+
+  <nav class="workflow-nav" aria-label="Etapas del recorrido">
+    <ol>
+      {% set etapas = ["Bienvenida", "Identificación", "Circuito", "Pruebas", "Informe"] %}
+      {% for nombre in etapas %}
+      <li class="{% if loop.index == etapa_actual %}actual{% elif loop.index < etapa_actual %}completada{% endif %}"
+          {% if loop.index == etapa_actual %}aria-current="step"{% endif %}>
+        <span class="step-number" aria-hidden="true">{% if loop.index < etapa_actual %}✓{% else %}{{ loop.index }}{% endif %}</span>
+        <span>{{ nombre }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <main class="page-shell">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <span class="footer-shield" aria-hidden="true">✓</span>
+    Prototipo educativo. No ofrece diagnóstico ni reemplaza la atención profesional.
+  </footer>
+
+  <dialog class="help-dialog" id="help-dialog" aria-labelledby="help-title">
+    <form method="dialog">
+      <button class="dialog-close" aria-label="Cerrar ayuda">×</button>
+    </form>
+    <span class="dialog-icon" aria-hidden="true">?</span>
+    <h2 id="help-title">Ayuda para este recorrido</h2>
+    <p>Seguí las instrucciones de cada pantalla. Podés usar Tab para cambiar de control y Enter o la barra espaciadora para activarlo.</p>
+    <p>Los resultados se muestran antes de guardarse. Si necesitás detenerte, podés cerrar la pantalla sin confirmar.</p>
+    <button class="primary-button" id="close-help" type="button">Entendido</button>
+  </dialog>
+
+  <script src="{{ url_for('static', path='js/app.js') }}?v=1"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

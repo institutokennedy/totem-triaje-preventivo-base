@@ -1,0 +1,405 @@
+(function () {
+  "use strict";
+
+  const CODIGO_DISPOSITIVO = "OIDO-PANTALLA-001";
+  const NOMBRE_DISPOSITIVO = "Respuestas en pantalla";
+  const TIPO_DISPOSITIVO = "OIDO";
+
+  // Frecuencias de estímulo en Hz (configurables; sin interpretación clínica).
+  const FRECUENCIAS_HZ = [250, 500, 1000, 2000, 4000, 8000];
+  const SIGUIENTE_URL = "/resumen";
+
+  const DURACION_TONO_MS = 1500;
+  const VOLUMEN = 0.1; // Ganancia digital; no equivale a un nivel calibrado en dB SPL.
+  const VOLUMEN_REDUCIDO = 0.01; // -20 dB respecto al volumen habitual.
+  const PAUSA_ENTRE_TONOS_MS = 800;
+  const $ = (id) => document.getElementById(id);
+  const raiz = $("oido-modulo");
+
+  function obtenerEpisodioId() {
+    const params = new URLSearchParams(window.location.search);
+    const valor =
+      params.get("episodio_id") ||
+      (raiz && raiz.dataset.episodioId) ||
+      sessionStorage.getItem("episodio_id");
+    const id = parseInt(valor, 10);
+    if (!Number.isInteger(id)) return null;
+    sessionStorage.setItem("episodio_id", String(id));
+    return id;
+  }
+
+  const estado = {
+    episodioId: obtenerEpisodioId(),
+    dispositivoRegistroId: null,
+    indice: 0,
+    estimulos: [],
+    ensayos: [],
+    audio: null,
+    resolver: null,
+    formulario: null,
+    nivelSeñal: "NORMAL",
+  };
+
+  function mensaje(texto, esError) {
+    const el = $("oido-mensaje");
+    el.textContent = texto || "";
+    el.className = esError ? "error" : "";
+  }
+
+  function mostrar(paso) {
+    ["paso-formulario", "paso-instrucciones", "paso-medicion", "paso-resumen"].forEach((id) => {
+      $(id).hidden = id !== paso;
+    });
+  }
+
+  const pausa = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // -------------------------------------------------------------- formulario
+  // Todas las casillas son opcionales: "Continuar" siempre está disponible.
+  function actualizarOpcionesProblema() {
+    const elegido = document.querySelector('input[name="tiene_problema_auditivo"]:checked');
+    const marcado = !!elegido && elegido.value === "true";
+    $("opciones-problema").hidden = !marcado;
+    const radioSi = $("chk-problema-si");
+    if (radioSi) radioSi.setAttribute("aria-expanded", String(marcado));
+    if (!marcado) {
+      document.querySelectorAll('input[name="problema"]').forEach((c) => {
+        c.checked = false;
+      });
+      actualizarCampoOtro();
+    }
+    actualizarEstadoContinuar();
+  }
+
+  function actualizarCampoOtro() {
+    const marcado = $("chk-otro").checked;
+    $("campo-otro").hidden = !marcado;
+    if (marcado) {
+      $("txt-otro").focus();
+    } else {
+      $("txt-otro").value = "";
+    }
+    actualizarEstadoContinuar();
+  }
+
+  function actualizarEstadoContinuar() {
+    const boton = $("btn-continuar");
+    const respuesta = document.querySelector('input[name="tiene_problema_auditivo"]:checked');
+    const tieneProblema = respuesta && respuesta.value === "true";
+    const opciones = Array.from(document.querySelectorAll('input[name="problema"]'));
+    const seleccionoProblema = opciones.some((c) => c.checked);
+    const otroMarcado = $("chk-otro").checked;
+    const textoOtro = $("txt-otro").value.trim();
+    const hayOtroValido = !otroMarcado || (otroMarcado && textoOtro.length > 0);
+
+    const habilitado = !respuesta || (!tieneProblema && respuesta.value === "false") ||
+      (tieneProblema && seleccionoProblema && hayOtroValido);
+
+    boton.disabled = !habilitado;
+  }
+
+  function valoresMarcados(nombre) {
+    return Array.from(document.querySelectorAll('input[name="' + nombre + '"]:checked')).map(
+      (c) => c.value
+    );
+  }
+
+  function continuarDesdeFormulario() {
+    const respuesta = document.querySelector('input[name="tiene_problema_auditivo"]:checked');
+    if (!respuesta) {
+      mensaje("Debe indicar si presenta o no algún problema de audición.", true);
+      return;
+    }
+
+    const tieneProblema = respuesta.value === "true";
+    const opciones = Array.from(document.querySelectorAll('input[name="problema"]'));
+    const seleccionoProblema = opciones.some((c) => c.checked);
+    const otroMarcado = $("chk-otro").checked;
+    const textoOtro = $("txt-otro").value.trim();
+    const hayOtroValido = !otroMarcado || (otroMarcado && textoOtro.length > 0);
+
+    if (tieneProblema && (!seleccionoProblema || !hayOtroValido)) {
+      mensaje("Si indica que sí presenta un problema, debe seleccionar al menos una opción.", true);
+      actualizarEstadoContinuar();
+      return;
+    }
+
+    const problemasAuditivos = valoresMarcados("problema");
+    estado.formulario = {
+      tiene_problema_auditivo: tieneProblema,
+      problemas_auditivos: problemasAuditivos,
+      otro_problema: $("txt-otro").value.trim(),
+      factores: valoresMarcados("factor"),
+    };
+    const reportaProblemaAuditivo =
+      estado.formulario.tiene_problema_auditivo || problemasAuditivos.length > 0;
+    estado.nivelSeñal = reportaProblemaAuditivo
+      ? "REDUCIDO_POR_AUTOINFORME"
+      : "NORMAL";
+    $("aviso-volumen-reducido").hidden = !reportaProblemaAuditivo;
+    try {
+      sessionStorage.setItem("oido_formulario", JSON.stringify(estado.formulario));
+    } catch (_) {
+      /* sin almacenamiento: se continúa igual */
+    }
+    mostrar("paso-instrucciones");
+  }
+
+  // El API requiere asociar cada resultado a un dispositivo registrado.
+  // Este registro identifica el módulo web; no representa hardware conectado.
+  function idDe(disp) {
+    return disp.id_dispositivo !== undefined ? disp.id_dispositivo : disp.id;
+  }
+
+  async function obtenerDispositivoRegistroId() {
+    const resp = await fetch("/api/v1/dispositivos");
+    if (!resp.ok) throw new Error("No se pudo consultar la lista de dispositivos");
+    const lista = await resp.json();
+    const items = Array.isArray(lista) ? lista : lista.items || [];
+    let disp = items.find((d) => d.codigo === CODIGO_DISPOSITIVO);
+
+    if (!disp) {
+      const creado = await fetch("/api/v1/dispositivos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          codigo: CODIGO_DISPOSITIVO,
+          nombre: NOMBRE_DISPOSITIVO,
+          tipo: TIPO_DISPOSITIVO,
+        }),
+      });
+      if (!creado.ok) {
+        throw new Error("No se pudo registrar el dispositivo " + CODIGO_DISPOSITIVO);
+      }
+      disp = await creado.json();
+    }
+
+    const id = idDe(disp);
+    if (id === undefined) throw new Error("El dispositivo no tiene identificador");
+    return id;
+  }
+
+  // ------------------------------------------------------------------ audio
+  function prepararAudio() {
+    const Contexto = window.AudioContext || window.webkitAudioContext;
+    if (!Contexto) throw new Error("Este navegador no permite reproducir audio");
+    if (!estado.audio) estado.audio = new Contexto();
+    if (typeof estado.audio.createStereoPanner !== "function") {
+      throw new Error("Este navegador no permite separar el audio en estéreo");
+    }
+    return estado.audio.state === "suspended" ? estado.audio.resume() : Promise.resolve();
+  }
+
+  // Reproduce el tono en un solo canal (derecho +1, izquierdo -1).
+  function reproducirTono(frecuenciaHz, oidoIdx) {
+    const ctx = estado.audio;
+    const osc = ctx.createOscillator();
+    const ganancia = ctx.createGain();
+    const duracion = DURACION_TONO_MS / 1000;
+    const t = ctx.currentTime;
+
+    osc.type = "sine";
+    osc.frequency.value = frecuenciaHz;
+    ganancia.gain.setValueAtTime(0, t);
+    const volumen = estado.nivelSeñal === "REDUCIDO_POR_AUTOINFORME"
+      ? VOLUMEN_REDUCIDO
+      : VOLUMEN;
+    ganancia.gain.linearRampToValueAtTime(volumen, t + 0.05);
+    ganancia.gain.setValueAtTime(volumen, t + duracion - 0.05);
+    ganancia.gain.linearRampToValueAtTime(0, t + duracion);
+
+    osc.connect(ganancia);
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = oidoIdx === 0 ? 1 : -1;
+    ganancia.connect(panner);
+    panner.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + duracion);
+  }
+
+  // La prueba avanza únicamente cuando la persona pulsa un botón en pantalla.
+  function esperarRespuesta() {
+    return new Promise((resolve) => {
+      estado.resolver = (valor) => {
+        estado.resolver = null;
+        resolve(valor);
+      };
+    });
+  }
+
+  // ------------------------------------------------------------------ prueba
+  function crearOrdenEstimulos() {
+    const estimulos = FRECUENCIAS_HZ.flatMap((frecuencia_hz) => [
+      { frecuencia_hz, lado_estimulo: "IZQUIERDO" },
+      { frecuencia_hz, lado_estimulo: "DERECHO" },
+    ]);
+    for (let i = estimulos.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [estimulos[i], estimulos[j]] = [estimulos[j], estimulos[i]];
+    }
+    return estimulos;
+  }
+
+  function reiniciar() {
+    estado.indice = 0;
+    estado.estimulos = crearOrdenEstimulos();
+    estado.ensayos = [];
+    $("progreso-total").textContent = String(estado.estimulos.length);
+    $("tabla-respuestas").querySelector("tbody").innerHTML = "";
+    $("estado-respuesta").textContent = "";
+    $("btn-confirmar").disabled = false;
+    mensaje("");
+  }
+
+  function actualizarEstimulo() {
+    $("frecuencia-actual").textContent = String(estado.estimulos[estado.indice].frecuencia_hz);
+    $("progreso-actual").textContent = String(estado.indice + 1);
+  }
+
+  async function ejecutarPrueba() {
+    for (let i = 0; i < estado.estimulos.length; i++) {
+      estado.indice = i;
+      const estimulo = estado.estimulos[i];
+      actualizarEstimulo();
+      $("estado-respuesta").textContent = "Escuche el tono y elija una respuesta en pantalla.";
+
+      reproducirTono(estimulo.frecuencia_hz, estimulo.lado_estimulo === "DERECHO" ? 0 : 1);
+      const respuesta = await esperarRespuesta();
+
+      estado.ensayos.push({
+        frecuencia_hz: estimulo.frecuencia_hz,
+        lado_estimulo: estimulo.lado_estimulo,
+        respuesta,
+      });
+
+      $("estado-respuesta").textContent = "Respuesta registrada.";
+      await pausa(PAUSA_ENTRE_TONOS_MS);
+    }
+    renderResumen();
+    mostrar("paso-resumen");
+  }
+
+  async function comenzar() {
+    const boton = $("btn-comenzar");
+    boton.disabled = true;
+    reiniciar();
+    try {
+      if (estado.dispositivoRegistroId === null) {
+        estado.dispositivoRegistroId = await obtenerDispositivoRegistroId();
+      }
+      await prepararAudio();
+      mostrar("paso-medicion");
+      await ejecutarPrueba();
+    } catch (err) {
+      mensaje("Error: " + err.message, true);
+      mostrar("paso-instrucciones");
+    } finally {
+      boton.disabled = false;
+    }
+  }
+
+  function textoLado(valor) {
+    return {
+      IZQUIERDO: "Izquierda",
+      DERECHO: "Derecha",
+      NO_ESCUCHE: "No escuché",
+    }[valor] || "Sin respuesta";
+  }
+
+  function renderResumen() {
+    const tbody = $("tabla-respuestas").querySelector("tbody");
+    tbody.innerHTML = "";
+    estado.ensayos.forEach((ensayo) => {
+      const tr = document.createElement("tr");
+      [
+        String(ensayo.frecuencia_hz),
+        textoLado(ensayo.lado_estimulo),
+        textoLado(ensayo.respuesta),
+      ].forEach((texto) => {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  function origenDeLosDatos() {
+    return "PANTALLA";
+  }
+
+  async function confirmar() {
+    const btn = $("btn-confirmar");
+    btn.disabled = true;
+    mensaje("Guardando resultados...");
+    try {
+      if (estado.dispositivoRegistroId === null) {
+        estado.dispositivoRegistroId = await obtenerDispositivoRegistroId();
+      }
+      const resp = await fetch("/api/v1/oido/resultados", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          episodio_id: estado.episodioId,
+          dispositivo_id: estado.dispositivoRegistroId,
+          origen: origenDeLosDatos(),
+          data: {
+            ensayos: estado.ensayos,
+            nivel_señal: estado.nivelSeñal,
+            cuestionario: estado.formulario,
+          },
+        }),
+      });
+      if (resp.status === 201) {
+        mensaje("Resultados guardados correctamente.");
+        window.location.href = SIGUIENTE_URL + "?episodio_id=" + estado.episodioId;
+        return;
+      }
+      throw new Error("El servidor respondió con estado " + resp.status);
+    } catch (err) {
+      mensaje("Error: " + err.message, true);
+      btn.disabled = false;
+    }
+  }
+
+  function repetir() {
+    // Reinicia los datos locales sin enviar nada al servidor.
+    reiniciar();
+    mostrar("paso-instrucciones");
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (estado.episodioId === null) {
+      mensaje("No hay un episodio activo. Regrese al inicio.", true);
+      $("btn-continuar").disabled = true;
+      $("btn-comenzar").disabled = true;
+      return;
+    }
+    $("progreso-total").textContent = String(FRECUENCIAS_HZ.length * 2);
+    document.querySelectorAll('input[name="tiene_problema_auditivo"]').forEach((radio) => {
+      radio.addEventListener("change", actualizarOpcionesProblema);
+    });
+    document.querySelectorAll('input[name="problema"]').forEach((checkbox) => {
+      checkbox.addEventListener("change", actualizarEstadoContinuar);
+    });
+    $("chk-otro").addEventListener("change", actualizarCampoOtro);
+    $("txt-otro").addEventListener("input", actualizarEstadoContinuar);
+    $("btn-continuar").addEventListener("click", continuarDesdeFormulario);
+    actualizarEstadoContinuar();
+    $("btn-comenzar").addEventListener("click", comenzar);
+    $("btn-izquierdo").addEventListener(
+      "click",
+      () => estado.resolver && estado.resolver("IZQUIERDO")
+    );
+    $("btn-derecho").addEventListener(
+      "click",
+      () => estado.resolver && estado.resolver("DERECHO")
+    );
+    $("btn-no-escuche").addEventListener(
+      "click",
+      () => estado.resolver && estado.resolver("NO_ESCUCHE")
+    );
+    $("btn-repetir").addEventListener("click", repetir);
+    $("btn-confirmar").addEventListener("click", confirmar);
+  });
+})();

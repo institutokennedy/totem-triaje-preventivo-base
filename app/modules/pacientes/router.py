@@ -67,6 +67,27 @@ def listar_pacientes(
 
 
 @router.get(
+    "/dni/{dni}",
+    response_model=PacienteRespuesta,
+)
+def obtener_paciente_por_dni(
+    dni: str,
+    session: Session = Depends(get_session),
+):
+    paciente = session.exec(
+        select(Paciente).where(Paciente.dni == dni)
+    ).first()
+
+    if paciente is None:
+        raise HTTPException(
+            status_code=404,
+            detail="El paciente no existe",
+        )
+
+    return paciente
+
+
+@router.get(
     "/{paciente_id}",
     response_model=PacienteRespuesta,
 )

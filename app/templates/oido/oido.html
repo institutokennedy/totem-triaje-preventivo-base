@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% set etapa_actual = 4 %}
+
+{% block title %}Módulo Oído{% endblock %}
+
+{% block content %}
+<style>
+  .modulo-oido { animation: arrive .25s ease-out both; }
+  .modulo-oido .oido-cabecera { max-width: 46rem; margin: 0 auto 1.3rem; }
+  .modulo-oido .oido-cabecera h1 { margin-bottom: .45rem; }
+  .modulo-oido .oido-cabecera > p:last-child { margin: 0; color: var(--muted); font-size: 1.05rem; }
+  .modulo-oido .oido-eyebrow {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    margin: 0 0 .8rem;
+    color: var(--teal-dark);
+    font-size: .73rem;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  .modulo-oido .oido-eyebrow::before { width: 1.25rem; height: 2px; background: #27aaa0; content: ""; }
+  .modulo-oido .oido-panel {
+    padding: clamp(1.1rem, 3vw, 1.7rem);
+    border: 1px solid var(--line);
+    border-radius: 1.1rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .modulo-oido .oido-panel > h2 { margin-top: 0; }
+  .modulo-oido fieldset {
+    margin: 1rem 0;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--line);
+    border-radius: .9rem;
+    background: #fbfdfd;
+  }
+  .modulo-oido legend { padding: 0 .25rem; font-weight: 750; }
+  .modulo-oido label { display: block; margin: .55rem 0; cursor: pointer; }
+  .modulo-oido input[type="checkbox"], .modulo-oido input[type="radio"] { width: 1.05rem; height: 1.05rem; accent-color: var(--teal); vertical-align: -.15rem; }
+  .modulo-oido .respuesta-problema { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; margin-top: .4rem; }
+  .modulo-oido .respuesta-problema label {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    margin: 0;
+    padding: .55rem .8rem;
+    border: 1px solid var(--line);
+    border-radius: .7rem;
+    background: #fff;
+  }
+  .modulo-oido .sub-opciones { margin: .65rem 0 0 .5rem; }
+  .modulo-oido #txt-otro { margin-left: .5rem; padding: .45rem .6rem; border: 1px solid #b9cdcf; border-radius: .5rem; }
+  .modulo-oido .instrucciones-pasos { display: grid; gap: .75rem; margin: 1rem 0 1.5rem; padding: 0; list-style: none; }
+  .modulo-oido .instrucciones-pasos li {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 0;
+    padding: .8rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: .9rem;
+    background: #fff;
+  }
+  .modulo-oido .instrucciones-pasos img {
+    flex: 0 0 8rem;
+    width: 8rem;
+    height: 5.4rem;
+    padding: .2rem;
+    border-radius: .7rem;
+    background: #eaf6f3;
+    object-fit: contain;
+  }
+  .modulo-oido .instrucciones-pasos span { max-width: 62ch; line-height: 1.6; }
+  .modulo-oido .instrucciones-pasos strong { color: var(--teal-dark); }
+  .modulo-oido .estimulo-actual {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .7rem;
+    margin: 1rem 0;
+  }
+  .modulo-oido .estimulo-actual p {
+    margin: 0;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: .8rem;
+    background: #f0f8f6;
+  }
+  .modulo-oido .acciones-respuesta button { min-width: 9rem; }
+  .modulo-oido #btn-no-escuche, .modulo-oido #btn-repetir {
+    border-color: #b7d4d7;
+    color: var(--ink);
+    background: #fff;
+  }
+  .modulo-oido #btn-no-escuche:hover:not(:disabled), .modulo-oido #btn-repetir:hover:not(:disabled) { background: #eff8f8; }
+  .modulo-oido table { width: 100%; margin-top: 1rem; border-collapse: collapse; }
+  .modulo-oido th, .modulo-oido td { padding: .75rem; border-bottom: 1px solid var(--line); text-align: left; }
+  .modulo-oido th { color: var(--muted); font-size: .82rem; }
+  .modulo-oido #oido-mensaje { min-height: 1.5rem; margin: 1rem 0 0; color: var(--teal-dark); }
+  .modulo-oido #oido-mensaje.error { color: var(--coral); }
+  .modulo-oido #aviso-volumen-reducido {
+    padding: .75rem 1rem;
+    border: 1px solid #f0d7a4;
+    border-radius: .75rem;
+    color: #72521e;
+    background: #fff7e6;
+  }
+  @media (max-width: 560px) {
+    .modulo-oido .instrucciones-pasos li { align-items: flex-start; gap: .7rem; padding: .65rem; }
+    .modulo-oido .instrucciones-pasos img { flex-basis: 5rem; width: 5rem; height: 5rem; }
+    .modulo-oido .estimulo-actual { grid-template-columns: 1fr; }
+    .modulo-oido .acciones-respuesta button { flex: 1 1 100%; }
+    .modulo-oido th, .modulo-oido td { padding: .55rem .35rem; font-size: .82rem; }
+  }
+</style>
+
+<section id="oido-modulo" class="modulo-oido" data-episodio-id="{{ episodio_id | default('') }}">
+  <header class="oido-cabecera">
+    <p class="oido-eyebrow">Evaluación auditiva · Prueba 1 de 6</p>
+    <h1>Prueba de oído</h1>
+    <p>La demostración usa tonos generados por el navegador. No equivale a una evaluación audiológica clínica.</p>
+  </header>
+
+  <div id="paso-formulario" class="oido-panel">
+    <h2>Antes de empezar, contanos un poco</h2>
+    <p>Esta información permite ajustar el volumen digital de los tonos. Si sentís molestia, detené la prueba.</p>
+
+    <fieldset>
+      <legend>¿Presenta algún problema o inconveniente de audición? (debe marcar si o si alguna)</legend>
+      <div class="respuesta-problema" role="radiogroup" aria-label="¿Presenta algún problema o inconveniente de audición? (debe marcar si o si alguna)">
+        <label>
+          <input type="radio" name="tiene_problema_auditivo" id="chk-problema-si" value="true" aria-controls="opciones-problema" aria-expanded="false">
+          Sí
+        </label>
+        <label>
+          <input type="radio" name="tiene_problema_auditivo" id="chk-problema-no" value="false">
+          No
+        </label>
+      </div>
+
+      <div id="opciones-problema" class="sub-opciones" hidden>
+        <p>Seleccione las opciones que correspondan:</p>
+        <label><input type="checkbox" name="problema" value="hipoacusia_(pérdida_de_audición)"> Hipoacusia (pérdida de audición)</label>
+        <label><input type="checkbox" name="problema" value="misofonia_(volumen_exagerado)"> Misofonía (volumen exagerado)</label>
+        <label><input type="checkbox" name="problema" value="reclutamiento_auditivo_(distorsión_sonora)"> Reclutamiento auditivo (distorsión sonora)</label>
+        <label><input type="checkbox" name="problema" value="fonofobia_(miedo_al_ruido)"> Fonofobia (miedo al ruido)</label>
+        <label>
+          <input type="checkbox" name="problema" value="otro" id="chk-otro"> Otro
+          <span id="campo-otro" hidden>
+            <input type="text" id="txt-otro" maxlength="100" placeholder="Especifique" aria-label="Especifique otro problema de audición">
+          </span>
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Marcar la que corresponde</legend>
+      <label><input type="checkbox" name="factor" value="uso_audifonos_constante"> Uso de audífonos constante</label>
+      <label><input type="checkbox" name="factor" value="tapón_de_cerumen_frecuentes_(tapones_de_cera)"> Tapón de cerumen frecuentes (tapones de cera)</label>
+      <label><input type="checkbox" name="factor" value="hipertension"> Hipertensión</label>
+      <label><input type="checkbox" name="factor" value="antecedentes_familiares_auditivos"> Antecedentes familiares con problemas auditivos</label>
+      <label><input type="checkbox" name="factor" value="otitis_frecuentes_(infección)"> Otitis frecuentes (infección)</label>
+      <label><input type="checkbox" name="factor" value="traumatismo_craneal"> Traumatismo craneal</label>
+      <label><input type="checkbox" name="factor" value="quimioterapia_ototoxicos"> Quimioterapia (fármacos ototóxicos)</label>
+      <label><input type="checkbox" name="factor" value="diabetes"> Diabetes</label>
+      <label><input type="checkbox" name="factor" value="exposicion_ruidos_fuertes"> Exposición a ruidos fuertes</label>
+    </fieldset>
+
+    <button id="btn-continuar" type="button">Continuar</button>
+  </div>
+
+  <div id="paso-instrucciones" class="oido-panel" hidden>
+    <p class="oido-eyebrow">Preparación · Prueba de oído</p>
+    <h2>Antes de empezar, seguí estos pasos</h2>
+    <p>Leé las instrucciones y asegurate de estar en un lugar tranquilo.</p>
+    <p id="aviso-volumen-reducido" role="status" aria-live="polite" hidden>
+      Se reducirá automáticamente el volumen digital de los tonos por la respuesta del formulario.
+      Esta reducción no garantiza un nivel seguro en todos los auriculares. Si siente molestia,
+      detenga la prueba y retire los auriculares.
+    </p>
+    <ol class="instrucciones-pasos">
+      <li>
+        <img src="{{ url_for('static', path='img/instruccion-auriculares.svg') }}?v=2" alt="Persona colocándose y ajustando los auriculares estéreo sobre ambas orejas">
+        <span>Colóquese auriculares <strong>estéreo</strong> conectados a la computadora.</span>
+      </li>
+      <li>
+        <img src="{{ url_for('static', path='img/instruccion-tonos.svg') }}?v=2" alt="Persona con auriculares que escucha tonos desde lados aleatorios sin conocer su origen">
+        <span>Presione "Comenzar". Se reproducirán tonos desde distintos lados, en orden aleatorio. No se le indicará de qué lado proviene cada uno.</span>
+      </li>
+      <li>
+        <img src="{{ url_for('static', path='img/instruccion-respuestas.svg') }}?v=1" alt="Botones en pantalla para responder Izquierda, Derecha o No escuché">
+        <span>Después de cada tono, haga clic en <strong>Izquierda</strong> o <strong>Derecha</strong>, según dónde lo escuchó. Si no oyó el tono, haga clic en <strong>No escuché</strong>. Responda usando solamente los botones de esta pantalla.</span>
+      </li>
+    </ol>
+    <button id="btn-comenzar" type="button">Comenzar</button>
+  </div>
+
+  <div id="paso-medicion" class="oido-panel" hidden>
+    <p class="oido-eyebrow">Prueba en curso · Escuchá y respondé</p>
+    <h2>¿De qué lado escuchaste el tono?</h2>
+    <div class="estimulo-actual" aria-live="polite">
+      <p>Frecuencia actual: <strong id="frecuencia-actual">—</strong> Hz</p>
+      <p>Progreso: <span id="progreso-actual">0</span> / <span id="progreso-total">0</span></p>
+    </div>
+    <p id="estado-respuesta" role="status" aria-live="polite"></p>
+    <p>Haga clic en el botón que corresponda al lado donde escuchó el tono. Si no lo oyó, haga clic en <strong>No escuché</strong>.</p>
+    <div class="acciones-respuesta">
+      <button id="btn-izquierdo" type="button">Izquierda</button>
+      <button id="btn-derecho" type="button">Derecha</button>
+      <button id="btn-no-escuche" type="button">No escuché</button>
+    </div>
+
+  </div>
+
+  <div id="paso-resumen" class="oido-panel" hidden>
+    <p class="oido-eyebrow">Resultado de demostración</p>
+    <h2>Revisá tus respuestas</h2>
+    <p>Podés repetir la prueba o confirmar para guardar el resultado en este episodio.</p>
+    <table id="tabla-respuestas">
+      <thead>
+        <tr>
+          <th>Frecuencia (Hz)</th>
+          <th>Lado del tono</th>
+          <th>Lado indicado</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="acciones-decision">
+      <button id="btn-repetir" type="button">Repetir</button>
+      <button id="btn-confirmar" type="button">Confirmar</button>
+    </div>
+  </div>
+
+  <p id="oido-mensaje" role="status" aria-live="polite"></p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/oido.js') }}?v=5"></script>
+{% endblock %}

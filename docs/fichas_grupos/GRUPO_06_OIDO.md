@@ -134,6 +134,7 @@ El resultado utiliza `modulo = "oido"`. Las tres listas se serializan dentro de 
 Consultar `FRONTEND_BASE_Y_FLUJO.md`. La pantalla Oído debe:
 
 - mostrar instrucciones;
+- capturar las respuestas exclusivamente con clic en los botones de pantalla (Izquierda, Derecha y No escuché), sin periféricos de respuesta;
 - indicar oído/frecuencia en prueba cuando corresponda;
 - mostrar un resumen técnico sin interpretación;
 - permitir repetir;

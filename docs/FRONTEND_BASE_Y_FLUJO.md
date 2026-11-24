@@ -5,7 +5,7 @@
 
 ## 1. Objetivo
 
-El frontend será desarrollado por los estudiantes. Se utilizará una única aplicación FastAPI con Jinja2, HTML, CSS y JavaScript básico. Cada grupo construye la pantalla de su propio módulo y además participa en una parte transversal de la interfaz.
+El frontend se integra progresivamente en una única aplicación FastAPI con Jinja2, HTML, CSS y JavaScript básico. Las pantallas disponibles (bienvenida, oído, resúmenes y documentación Swagger/OpenAPI) comparten una identidad visual y componentes de accesibilidad; los grupos pueden construir las pantallas de los módulos aún pendientes usando esa base común.
 
 ## 2. Arquitectura
 
